@@ -98,8 +98,8 @@ func (f *Factory) NewReaderFromMetadata(file *os.File, m *Metadata) (r *Reader, 
 	}
 	r.set.Logger = r.set.Logger.With(zap.String("path", r.fileName))
 
+	// 🪶 Handle fingerprint length mismatch (config changes, etc.)
 	if r.Fingerprint.Len() > r.fingerprintSize {
-		// User has reconfigured fingerprint_size
 		shorter, rereadErr := fingerprint.NewFromFile(file, r.fingerprintSize, r.compression != "")
 		if rereadErr != nil {
 			return nil, fmt.Errorf("reread fingerprint: %w", rereadErr)
@@ -110,18 +110,55 @@ func (f *Factory) NewReaderFromMetadata(file *os.File, m *Metadata) (r *Reader, 
 		m.Fingerprint = shorter
 	}
 
-	if !f.FromBeginning {
-		var info os.FileInfo
-		if info, err = r.file.Stat(); err != nil {
-			return nil, fmt.Errorf("stat: %w", err)
-		}
-		r.Offset = info.Size()
+	// ⚙️ Determine correct starting offset
+	inf, statErr := file.Stat()
+	if statErr != nil {
+		return nil, fmt.Errorf("stat: %w", statErr)
+	}
+	fileSize := inf.Size()
+
+	// If metadata offset exceeds file size, likely copytruncate → reset
+	if m.Offset > fileSize {
+		f.Logger.Warn("metadata offset exceeds file size, resetting to 0 (possible copytruncate)",
+			zap.String("path", file.Name()),
+			zap.Int64("metadata_offset", m.Offset),
+			zap.Int64("current_file_size", fileSize),
+		)
+		m.Offset = 0
 	}
 
+	// Decide where to start reading:
+	// 1. If this is a resume/rotation with metadata offset → continue
+	// 2. If no offset known (m.Offset == 0):
+	//    - start at 0 if FromBeginning=true
+	//    - start at EOF if FromBeginning=false (tail mode)
+	start := m.Offset
+	if start == 0 {
+		if f.FromBeginning {
+			f.Logger.Debug("📍 NewReaderFromMetadata(): FromBeginning=true, starting at 0",
+				zap.String("path", file.Name()))
+			start = 0
+		} else {
+			f.Logger.Debug("📍 NewReaderFromMetadata(): FromBeginning=false, tailing from EOF",
+				zap.String("path", file.Name()),
+				zap.Int64("file_size", fileSize))
+			start = fileSize
+		}
+	} else {
+		f.Logger.Debug("📍 NewReaderFromMetadata(): Resuming from saved offset",
+			zap.String("path", file.Name()),
+			zap.Int64("saved_offset", start),
+			zap.Int64("file_size", fileSize))
+	}
+
+	r.Offset = start
+
+	// 🧩 Tokenization and flush setup
 	tokenLenFunc := m.TokenLenState.Func(f.SplitFunc)
 	flushFunc := m.FlushState.Func(tokenLenFunc, f.FlushTimeout)
 	r.contentSplitFunc = trim.WithFunc(trim.ToLength(flushFunc, f.MaxLogSize), f.TrimFunc)
 
+	// 🧾 Optional header reader (multi-line or structured logs)
 	if f.HeaderConfig != nil && !m.HeaderFinalized {
 		r.headerSplitFunc = f.HeaderConfig.SplitFunc
 		r.headerReader, err = header.NewReader(f.TelemetrySettings, *f.HeaderConfig)
@@ -130,11 +167,11 @@ func (f *Factory) NewReaderFromMetadata(file *os.File, m *Metadata) (r *Reader, 
 		}
 	}
 
+	// 🏷️ Resolve and apply file attributes
 	attributes, err := f.Attributes.Resolve(file)
 	if err != nil {
 		return nil, err
 	}
-	// Copy attributes into existing map to avoid overwriting header attributes
 	maps.Copy(r.FileAttributes, attributes)
 
 	return r, nil

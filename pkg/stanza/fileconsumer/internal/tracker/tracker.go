@@ -5,6 +5,7 @@ package tracker // import "github.com/open-telemetry/opentelemetry-collector-con
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 
@@ -90,6 +91,9 @@ func (t *fileTracker) GetCurrentFile(fp *fingerprint.Fingerprint) *reader.Reader
 }
 
 func (t *fileTracker) GetOpenFile(fp *fingerprint.Fingerprint) *reader.Reader {
+	t.set.Logger.Debug("🧩 tracker.GetOpenFile() lookup",
+		zap.String("fingerprint_head", fmt.Sprintf("%x", fp.Head(16))),
+	)
 	return t.previousPollFiles.Match(fp, fileset.StartsWith)
 }
 

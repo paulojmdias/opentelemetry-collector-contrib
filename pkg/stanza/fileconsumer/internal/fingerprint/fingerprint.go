@@ -136,3 +136,30 @@ func (f *Fingerprint) UnmarshalJSON(data []byte) error {
 type marshal struct {
 	FirstBytes []byte `json:"first_bytes"`
 }
+
+// HexHead returns up to the first n bytes of the fingerprint as hex,
+// for safe, short debug logging.
+func (f Fingerprint) HexHead(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if n > len(f.firstBytes) {
+		n = len(f.firstBytes)
+	}
+	const hexdigits = "0123456789abcdef"
+	out := make([]byte, n*2)
+	for i := 0; i < n; i++ {
+		b := f.firstBytes[i]
+		out[i*2] = hexdigits[b>>4]
+		out[i*2+1] = hexdigits[b&0x0f]
+	}
+	return string(out)
+}
+
+// Head returns the first n bytes of the fingerprint (for debug/logging).
+func (f *Fingerprint) Head(n int) []byte {
+	if len(f.firstBytes) < n {
+		return f.firstBytes
+	}
+	return f.firstBytes[:n]
+}

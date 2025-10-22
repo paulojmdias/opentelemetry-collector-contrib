@@ -28,7 +28,19 @@ func (m *Manager) readLostFiles(ctx context.Context) {
 OUTER:
 	for _, oldReader := range previousPollFiles {
 		for _, newReader := range m.tracker.CurrentPollFiles() {
+			m.set.Logger.Debug("lost-check",
+				zap.String("old_path", oldReader.GetFileName()),
+				zap.String("new_path", newReader.GetFileName()),
+				zap.Int("old_fp_len", oldReader.Fingerprint.Len()),
+				zap.Int("new_fp_len", newReader.Fingerprint.Len()),
+				zap.String("old_fp_head", oldReader.Fingerprint.HexHead(16)),
+				zap.String("new_fp_head", newReader.Fingerprint.HexHead(16)),
+			)
 			if newReader.Fingerprint.StartsWith(oldReader.Fingerprint) {
+				m.set.Logger.Debug("lost-check: startswith matched, treating as not-lost",
+					zap.String("old_path", oldReader.GetFileName()),
+					zap.String("new_path", newReader.GetFileName()),
+				)
 				continue OUTER
 			}
 

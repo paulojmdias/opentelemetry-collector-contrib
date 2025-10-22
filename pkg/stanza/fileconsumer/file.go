@@ -59,9 +59,12 @@ func (m *Manager) Start(persister operator.Persister) error {
 			return fmt.Errorf("read known files from database: %w", err)
 		}
 		if len(offsets) > 0 {
-			m.set.Logger.Info("Resuming from previously known offset(s). 'start_at' setting is not applicable.")
-			m.readerFactory.FromBeginning = true
+			m.set.Logger.Info("Resuming from stored offsets; continuing from last known positions.")
+			m.readerFactory.FromBeginning = false
 			m.tracker.LoadMetadata(offsets)
+		} else {
+			m.set.Logger.Info("No stored offsets; starting fresh (FromBeginning = true).")
+			m.readerFactory.FromBeginning = true
 		}
 	} else if m.pollsToArchive > 0 {
 		m.set.Logger.Error("archiving is not supported in memory, please use a storage extension")
@@ -144,6 +147,9 @@ func (m *Manager) poll(ctx context.Context) {
 	if m.persister != nil {
 		metadata := m.tracker.GetMetadata()
 		if metadata != nil {
+			m.set.Logger.Debug("💾 Saving offsets to checkpoint",
+				zap.Int("tracked_files", len(metadata)),
+			)
 			if err := checkpoint.Save(context.Background(), m.persister, metadata); err != nil {
 				m.set.Logger.Error("save offsets", zap.Error(err))
 			}
@@ -206,9 +212,21 @@ func (m *Manager) makeFingerprint(path string) (*fingerprint.Fingerprint, *os.Fi
 func (m *Manager) makeReaders(ctx context.Context, paths []string) {
 	for _, path := range paths {
 		fp, file := m.makeFingerprint(path)
+		if fp != nil {
+			m.set.Logger.Debug("🪶 Fingerprint created",
+				zap.String("path", path),
+				zap.Int("fp_len", fp.Len()),
+			)
+		}
 		if fp == nil {
 			continue
 		}
+
+		m.set.Logger.Debug("fp created",
+			zap.String("path", path),
+			zap.Int("fp_len", fp.Len()),
+			zap.String("fp_head", fp.HexHead(16)),
+		)
 
 		// Exclude duplicate paths with the same content. This can happen when files are
 		// being rotated with copy/truncate strategy. (After copy, prior to truncate.)
@@ -276,20 +294,35 @@ func (m *Manager) handleUnmatchedFiles(ctx context.Context) {
 func (m *Manager) newReader(ctx context.Context, file *os.File, fp *fingerprint.Fingerprint) (*reader.Reader, error) {
 	// Check previous poll cycle for match
 	if oldReader := m.tracker.GetOpenFile(fp); oldReader != nil {
-		if oldReader.GetFileName() != file.Name() {
-			if !oldReader.Validate() {
-				m.set.Logger.Debug(
-					"File has been rotated(truncated)",
-					zap.String("original_path", oldReader.GetFileName()),
-					zap.String("rotated_path", file.Name()))
-			} else {
-				m.set.Logger.Debug(
-					"File has been rotated(moved)",
-					zap.String("original_path", oldReader.GetFileName()),
-					zap.String("rotated_path", file.Name()))
-			}
+		// If it's the same file (no rotation), just reuse the existing reader.
+		if oldReader.GetFileName() == file.Name() {
+			m.set.Logger.Debug("Reusing existing reader for same file",
+				zap.String("path", file.Name()),
+				zap.Int64("offset", oldReader.Offset),
+			)
+			return oldReader, nil
 		}
-		return m.readerFactory.NewReaderFromMetadata(file, oldReader.Close())
+
+		// Rotation detected: moved vs truncated
+		rotatedKind := "moved"
+		if !oldReader.Validate() {
+			rotatedKind = "truncated"
+		}
+		m.set.Logger.Debug("File rotated ("+rotatedKind+")",
+			zap.String("original_path", oldReader.GetFileName()),
+			zap.String("rotated_path", file.Name()),
+		)
+
+		// Close old reader and build a new one from its metadata
+		md := oldReader.Close()
+		if info, err := file.Stat(); err == nil {
+			m.set.Logger.Debug("🧠 Creating new reader from metadata after rotation",
+				zap.String("path", file.Name()),
+				zap.Int64("saved_offset", md.Offset),
+				zap.Int64("file_size", info.Size()),
+			)
+		}
+		return m.readerFactory.NewReaderFromMetadata(file, md)
 	}
 
 	// Check for closed files for match

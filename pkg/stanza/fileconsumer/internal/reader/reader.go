@@ -279,6 +279,10 @@ func (r *Reader) delete() {
 	}
 }
 
+func (r *Reader) SnapshotMetadata() *Metadata {
+	return r.Metadata
+}
+
 // Close will close the file and return the metadata
 func (r *Reader) Close() *Metadata {
 	r.close()
