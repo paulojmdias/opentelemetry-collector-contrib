@@ -96,21 +96,35 @@ func NewFranzSyncProducer(ctx context.Context, clientCfg configkafka.ClientConfi
 func NewFranzConsumerGroup(ctx context.Context, clientCfg configkafka.ClientConfig,
 	consumerCfg configkafka.ConsumerConfig,
 	topics []string,
+	excludeTopics []string,
 	logger *zap.Logger,
 	opts ...kgo.Opt,
 ) (*kgo.Client, error) {
+	// Combine topics and exclude topics into the ConsumeTopics option
+	// Franz-go supports topic exclusion by prefixing topics with `!`
+	// See: https://pkg.go.dev/github.com/twmb/franz-go/pkg/kgo#ConsumeTopics
+	allTopics := make([]string, 0, len(topics)+len(excludeTopics))
+	allTopics = append(allTopics, topics...)
+
+	// Add exclude topics with the `!` prefix for franz-go
+	for _, excludeTopic := range excludeTopics {
+		allTopics = append(allTopics, "!"+excludeTopic)
+	}
+
 	opts, err := commonOpts(ctx, clientCfg, logger, append([]kgo.Opt{
-		kgo.ConsumeTopics(topics...),
+		kgo.ConsumeTopics(allTopics...),
 		kgo.ConsumerGroup(consumerCfg.GroupID),
 	}, opts...)...)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, t := range topics {
+	// Check if any topic (including exclude patterns) uses regex
+	for _, t := range allTopics {
 		// Similar to librdkafka, if the topic starts with `^`, it is a regex topic:
 		// https://github.com/confluentinc/librdkafka/blob/b871fdabab84b2ea1be3866a2ded4def7e31b006/src/rdkafka.h#L3899-L3938
-		if strings.HasPrefix(t, "^") {
+		// Also check for `!^` pattern for excluded regex topics
+		if strings.HasPrefix(t, "^") || strings.HasPrefix(t, "!^") {
 			opts = append(opts, kgo.ConsumeRegex())
 			break
 		}

@@ -131,6 +131,13 @@ type TopicEncodingConfig struct {
 	//  - "otlp_profiles" for profiles
 	Topic string `mapstructure:"topic"`
 
+	// ExcludeTopic holds an optional regex pattern for topics to exclude from consumption.
+	// When Topic uses a regex pattern (starting with ^), this field can be used to
+	// exclude specific topics that match the Topic pattern.
+	// This is useful when you want to consume topics matching a pattern but exclude
+	// certain topics (e.g., Topic: "^logs-.*", ExcludeTopic: "^logs-(test|debug)$").
+	ExcludeTopic string `mapstructure:"exclude_topic"`
+
 	// Encoding holds the expected encoding of messages for the signal type
 	//
 	// Defaults to "otlp_proto".

@@ -29,11 +29,18 @@ func newSaramaConsumer(
 	config *Config,
 	set receiver.Settings,
 	topics []string,
+	excludeTopics []string,
 	newConsumeFn newConsumeMessageFunc,
 ) (*saramaConsumer, error) {
 	telemetryBuilder, err := metadata.NewTelemetryBuilder(set.TelemetrySettings)
 	if err != nil {
 		return nil, err
+	}
+
+	// Note: Sarama consumer does not support exclude topics natively.
+	// Users should enable the franz-go consumer feature gate to use this feature.
+	if len(excludeTopics) > 0 {
+		set.Logger.Warn("exclude_topic is only supported with franz-go consumer. Enable the receiver.kafkareceiver.UseFranzGo feature gate to use this feature.")
 	}
 
 	return &saramaConsumer{

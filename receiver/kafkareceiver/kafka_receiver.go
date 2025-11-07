@@ -87,7 +87,11 @@ func newLogsReceiver(config *Config, set receiver.Settings, nextConsumer consume
 			)
 		}, nil
 	}
-	return newReceiver(config, set, []string{config.Logs.Topic}, newConsumeMessageFunc)
+	var excludeTopics []string
+	if config.Logs.ExcludeTopic != "" {
+		excludeTopics = []string{config.Logs.ExcludeTopic}
+	}
+	return newReceiver(config, set, []string{config.Logs.Topic}, excludeTopics, newConsumeMessageFunc)
 }
 
 func newMetricsReceiver(config *Config, set receiver.Settings, nextConsumer consumer.Metrics) (receiver.Metrics, error) {
@@ -111,7 +115,11 @@ func newMetricsReceiver(config *Config, set receiver.Settings, nextConsumer cons
 			)
 		}, nil
 	}
-	return newReceiver(config, set, []string{config.Metrics.Topic}, newConsumeMessageFunc)
+	var excludeTopics []string
+	if config.Metrics.ExcludeTopic != "" {
+		excludeTopics = []string{config.Metrics.ExcludeTopic}
+	}
+	return newReceiver(config, set, []string{config.Metrics.Topic}, excludeTopics, newConsumeMessageFunc)
 }
 
 func newTracesReceiver(config *Config, set receiver.Settings, nextConsumer consumer.Traces) (receiver.Traces, error) {
@@ -135,7 +143,11 @@ func newTracesReceiver(config *Config, set receiver.Settings, nextConsumer consu
 			)
 		}, nil
 	}
-	return newReceiver(config, set, []string{config.Traces.Topic}, consumeFn)
+	var excludeTopics []string
+	if config.Traces.ExcludeTopic != "" {
+		excludeTopics = []string{config.Traces.ExcludeTopic}
+	}
+	return newReceiver(config, set, []string{config.Traces.Topic}, excludeTopics, consumeFn)
 }
 
 func newProfilesReceiver(config *Config, set receiver.Settings, nextConsumer xconsumer.Profiles) (xreceiver.Profiles, error) {
@@ -159,22 +171,27 @@ func newProfilesReceiver(config *Config, set receiver.Settings, nextConsumer xco
 			)
 		}, nil
 	}
-	return newReceiver(config, set, []string{config.Profiles.Topic}, consumeFn)
+	var excludeTopics []string
+	if config.Profiles.ExcludeTopic != "" {
+		excludeTopics = []string{config.Profiles.ExcludeTopic}
+	}
+	return newReceiver(config, set, []string{config.Profiles.Topic}, excludeTopics, consumeFn)
 }
 
 func newReceiver(
 	config *Config,
 	set receiver.Settings,
 	topics []string,
+	excludeTopics []string,
 	consumeFn func(host component.Host,
 		obsrecv *receiverhelper.ObsReport,
 		telBldr *metadata.TelemetryBuilder,
 	) (consumeMessageFunc, error),
 ) (component.Component, error) {
 	if franzGoConsumerFeatureGate.IsEnabled() {
-		return newFranzKafkaConsumer(config, set, topics, consumeFn)
+		return newFranzKafkaConsumer(config, set, topics, excludeTopics, consumeFn)
 	}
-	return newSaramaConsumer(config, set, topics, consumeFn)
+	return newSaramaConsumer(config, set, topics, excludeTopics, consumeFn)
 }
 
 type logsHandler struct {

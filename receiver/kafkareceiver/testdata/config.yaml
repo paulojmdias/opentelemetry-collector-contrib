@@ -98,3 +98,15 @@ kafka/message_marking_on_permanent_error_inherited:
   message_marking:
     after: true
     on_error: true
+kafka/exclude_topic:
+  logs:
+    topic: "^logs-.*"
+    exclude_topic: "^logs-(test|debug)$"
+    encoding: otlp_proto
+  metrics:
+    topic: "^metrics-.*"
+    exclude_topic: "^metrics-internal$"
+    encoding: otlp_proto
+  traces:
+    topic: "^traces-.*"
+    encoding: otlp_proto
