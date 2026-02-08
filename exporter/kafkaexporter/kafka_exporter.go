@@ -121,14 +121,7 @@ func (e *kafkaExporter[T]) exportData(ctx context.Context, data T) error {
 	for key, data := range e.messenger.partitionData(data) {
 		topic := e.messenger.getTopic(ctx, data)
 		partitionMessages, err := e.messenger.marshalData(data)
-		if err != nil {
-			err = fmt.Errorf("error exporting to topic %q: %w", topic, err)
-			e.logger.Error("kafka records marshal data failed",
-				zap.String("topic", topic),
-				zap.Error(err),
-			)
-			return consumererror.NewPermanent(err)
-		}
+		// Process successfully marshaled messages even if some failed
 		for i := range partitionMessages {
 			// Marshalers may set the Key, so don't override
 			// if it's set and we're not partitioning here.
@@ -136,11 +129,24 @@ func (e *kafkaExporter[T]) exportData(ctx context.Context, data T) error {
 				partitionMessages[i].Key = key
 			}
 		}
-		m.Count += len(partitionMessages)
-		m.TopicMessages = append(m.TopicMessages, kafkaclient.TopicMessages{
-			Topic:    topic,
-			Messages: partitionMessages,
-		})
+		if len(partitionMessages) > 0 {
+			m.Count += len(partitionMessages)
+			m.TopicMessages = append(m.TopicMessages, kafkaclient.TopicMessages{
+				Topic:    topic,
+				Messages: partitionMessages,
+			})
+		}
+		// Log partial failures but continue with successfully marshaled messages
+		if err != nil {
+			e.logger.Warn("some kafka records failed to marshal",
+				zap.String("topic", topic),
+				zap.Error(err),
+			)
+		}
+		// Only return error if all messages failed to marshal
+		if err != nil && len(partitionMessages) == 0 {
+			return consumererror.NewPermanent(fmt.Errorf("error exporting to topic %q: %w", topic, err))
+		}
 	}
 	err := e.producer.ExportData(ctx, m)
 	if err == nil {

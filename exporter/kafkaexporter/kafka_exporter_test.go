@@ -6,6 +6,7 @@ package kafkaexporter
 import (
 	"context"
 	"errors"
+	"iter"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter/internal/kafkaclient"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter/internal/marshaler"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/kafkaexporter/internal/metadata"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/kafka"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/internal/kafka/kafkatest"
@@ -261,6 +263,45 @@ func TestTracesPusher_marshal_error(t *testing.T) {
 
 	err := exp.exportData(t.Context(), testdata.GenerateTraces(2))
 	assert.ErrorContains(t, err, marshalErr.Error())
+}
+
+func TestTracesPusher_partial_marshal_failure(t *testing.T) {
+	config := createDefaultConfig().(*Config)
+	exp, fakeCluster := newKgoMockTracesExporter(t, *config, componenttest.NewNopHost(), config.Traces.Topic)
+	defer fakeCluster.Close()
+
+	// Mock returns 2 successful messages AND an error (simulating 1 failed span out of 3)
+	exp.messenger = &mockPartialFailureMessenger{
+		messages: []marshaler.Message{
+			{Value: []byte("msg1")},
+			{Value: []byte("msg2")},
+		},
+		err:   errors.New("1 span failed to marshal"),
+		topic: config.Traces.Topic,
+	}
+
+	err := exp.exportData(t.Context(), ptrace.NewTraces())
+	require.NoError(t, err, "should not return error when some messages marshaled successfully")
+
+	records := fetchKgoRecords(t, fakeCluster.ListenAddrs(), config.Traces.Topic, 2)
+	require.Len(t, records, 2, "successfully marshaled messages should be exported")
+}
+
+func TestTracesPusher_all_marshal_failure(t *testing.T) {
+	config := createDefaultConfig().(*Config)
+	exp, fakeCluster := newKgoMockTracesExporter(t, *config, componenttest.NewNopHost(), config.Traces.Topic)
+	defer fakeCluster.Close()
+
+	allFailErr := errors.New("all messages failed to marshal")
+	exp.messenger = &mockPartialFailureMessenger{
+		messages: nil,
+		err:      allFailErr,
+		topic:    config.Traces.Topic,
+	}
+
+	err := exp.exportData(t.Context(), ptrace.NewTraces())
+	require.Error(t, err, "should return error when all messages fail to marshal")
+	assert.True(t, consumererror.IsPermanent(err))
 }
 
 func TestMetricsPusher_conf_err(t *testing.T) {
@@ -982,4 +1023,24 @@ func fetchKgoRecords(tb testing.TB, brokers []string, topic string, maxRecords i
 		records = append(records, r)
 	})
 	return records
+}
+
+type mockPartialFailureMessenger struct {
+	messages []marshaler.Message
+	err      error
+	topic    string
+}
+
+func (m *mockPartialFailureMessenger) marshalData(ptrace.Traces) ([]marshaler.Message, error) {
+	return m.messages, m.err
+}
+
+func (m *mockPartialFailureMessenger) getTopic(context.Context, ptrace.Traces) string {
+	return m.topic
+}
+
+func (*mockPartialFailureMessenger) partitionData(td ptrace.Traces) iter.Seq2[[]byte, ptrace.Traces] {
+	return func(yield func([]byte, ptrace.Traces) bool) {
+		yield(nil, td)
+	}
 }

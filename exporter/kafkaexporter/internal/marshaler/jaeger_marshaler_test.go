@@ -5,9 +5,12 @@ package marshaler
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gogo/protobuf/jsonpb"
+	jaegerproto "github.com/jaegertracing/jaeger-idl/model/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -57,4 +60,37 @@ func TestJaegerMarshaler(t *testing.T) {
 			assert.Equal(t, test.messages, messages)
 		})
 	}
+}
+
+func TestJaegerMarshaler_PartialFailure(t *testing.T) {
+	td := ptrace.NewTraces()
+	rs := td.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+
+	for i := range 3 {
+		span := ss.Spans().AppendEmpty()
+		span.SetName(fmt.Sprintf("span-%d", i))
+		span.SetStartTimestamp(pcommon.Timestamp(10))
+		span.SetEndTimestamp(pcommon.Timestamp(20))
+		span.SetTraceID([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, byte(i), 15, 16})
+		span.SetSpanID([8]byte{1, 2, 3, 4, 5, 6, 7, byte(i)})
+	}
+
+	failOnIndex := 1
+	callCount := 0
+	customMarshal := func(span *jaegerproto.Span) ([]byte, error) {
+		currentIndex := callCount
+		callCount++
+		if currentIndex == failOnIndex {
+			return nil, errors.New("simulated marshal failure")
+		}
+		return span.Marshal()
+	}
+
+	messages, err := marshalJaeger(td, customMarshal)
+
+	require.Equal(t, 3, callCount)
+	require.Len(t, messages, 2, "successfully marshaled spans should be returned")
+	require.Error(t, err, "error should be returned for failed spans")
+	require.Contains(t, err.Error(), "simulated marshal failure")
 }
