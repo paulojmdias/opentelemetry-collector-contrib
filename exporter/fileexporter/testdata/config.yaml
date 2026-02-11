@@ -38,7 +38,7 @@ file/format_error:
 
 file/compression_error:
   path: ./filename.log
-  compression: snappy
+  compression: gzip
 
 file/flush_interval_5:
   path: ./flushed
@@ -74,7 +74,7 @@ file/group_by_invalid_path:
     enabled: true
 
 file/group_by_invalid_path2:
-  path: '*/./group_by'
+  path: "*/./group_by"
   group_by:
     enabled: true
 
