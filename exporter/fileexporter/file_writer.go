@@ -8,6 +8,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/open-telemetry/opentelemetry-collector-contrib/exporter/fileexporter/internal/metadata"
 )
 
 // exportFunc defines how to export encoded telemetry data.
@@ -106,6 +108,16 @@ func (w *fileWriter) shutdown() error {
 }
 
 func buildExportFunc(cfg *Config) func(w *fileWriter, buf []byte) error {
+	if metadata.ExporterFileNativeCompressionFeatureGate.IsEnabled() && cfg.Compression != "" {
+		// Native compression: the compression stream handles framing, so
+		// JSON can use newline-delimited output (human-readable after decompression).
+		// Proto still needs length-prefix for message boundary detection.
+		if cfg.FormatType == formatTypeJSON {
+			return exportMessageAsLine
+		}
+		return exportMessageAsBuffer
+	}
+	// Legacy behavior
 	if cfg.FormatType == formatTypeProto {
 		return exportMessageAsBuffer
 	}

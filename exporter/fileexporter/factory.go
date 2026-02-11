@@ -167,8 +167,10 @@ func newFileExporter(conf *Config, logger *zap.Logger) FileExporter {
 	}
 }
 
-func newFileWriter(path string, shouldAppend bool, rotation *Rotation, flushInterval time.Duration, export exportFunc) (*fileWriter, error) {
+func newFileWriter(path string, shouldAppend bool, rotation *Rotation, flushInterval time.Duration, export exportFunc, compression string, compressionLevel int) (*fileWriter, error) {
+	var baseWriter io.WriteCloser
 	var wc io.WriteCloser
+
 	if rotation == nil {
 		fileFlags := os.O_RDWR | os.O_CREATE
 		if shouldAppend {
@@ -180,15 +182,29 @@ func newFileWriter(path string, shouldAppend bool, rotation *Rotation, flushInte
 		if err != nil {
 			return nil, err
 		}
-		wc = newBufferedWriteCloser(f)
+		baseWriter = f
 	} else {
-		wc = &timberjack.Logger{
+		baseWriter = &timberjack.Logger{
 			Filename:   path,
 			MaxSize:    rotation.MaxMegabytes,
 			MaxAge:     rotation.MaxDays,
 			MaxBackups: rotation.MaxBackups,
 			LocalTime:  rotation.LocalTime,
 		}
+	}
+
+	switch {
+	case compression != "" && metadata.ExporterFileNativeCompressionFeatureGate.IsEnabled():
+		var err error
+		wc, err = newCompressingWriter(baseWriter, compression, compressionLevel)
+		if err != nil {
+			baseWriter.Close()
+			return nil, err
+		}
+	case rotation == nil:
+		wc = newBufferedWriteCloser(baseWriter)
+	default:
+		wc = baseWriter
 	}
 
 	return &fileWriter{

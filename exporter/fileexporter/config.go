@@ -53,6 +53,10 @@ type Config struct {
 	// Supported compression algorithms:`zstd`
 	Compression string `mapstructure:"compression"`
 
+	// CompressionLevel sets the compression level.
+	// Zstd: 0 (default) to 22.
+	CompressionLevel int `mapstructure:"compression_level"`
+
 	// FlushInterval is the duration between flushes.
 	// See time.ParseDuration for valid values.
 	FlushInterval time.Duration `mapstructure:"flush_interval"`
@@ -124,6 +128,12 @@ func (cfg *Config) Validate() error {
 	}
 	if cfg.Compression != "" && cfg.Compression != compressionZSTD {
 		return errors.New("compression is not supported")
+	}
+	if cfg.CompressionLevel < 0 {
+		return errors.New("compression_level must not be negative")
+	}
+	if cfg.Compression == compressionZSTD && cfg.CompressionLevel > 22 {
+		return errors.New("compression_level for zstd must be between 0 and 22")
 	}
 	if cfg.FlushInterval < 0 {
 		return errors.New("flush_interval must be larger than zero")
