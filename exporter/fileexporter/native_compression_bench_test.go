@@ -4,7 +4,6 @@
 package fileexporter
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,18 +90,18 @@ func benchExportTraces(b *testing.B, format, compression string, level int, td p
 	}}
 	require.NoError(b, fe.Start(b.Context(), componenttest.NewNopHost()))
 
-	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := fe.consumeTraces(ctx, td); err != nil {
+		if err := fe.consumeTraces(b.Context(), td); err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.StopTimer()
 
-	require.NoError(b, fe.Shutdown(ctx))
-	info, _ := os.Stat(fe.conf.Path)
+	require.NoError(b, fe.Shutdown(b.Context()))
+	info, err := os.Stat(fe.conf.Path)
+	require.NoError(b, err)
 	b.ReportMetric(float64(info.Size())/float64(b.N), "output-bytes/op")
 }
 
@@ -117,18 +116,18 @@ func benchExportLogs(b *testing.B, format, compression string, level int, ld plo
 	}}
 	require.NoError(b, fe.Start(b.Context(), componenttest.NewNopHost()))
 
-	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		if err := fe.consumeLogs(ctx, ld); err != nil {
+		if err := fe.consumeLogs(b.Context(), ld); err != nil {
 			b.Fatal(err)
 		}
 	}
 	b.StopTimer()
 
-	require.NoError(b, fe.Shutdown(ctx))
-	info, _ := os.Stat(fe.conf.Path)
+	require.NoError(b, fe.Shutdown(b.Context()))
+	info, err := os.Stat(fe.conf.Path)
+	require.NoError(b, err)
 	b.ReportMetric(float64(info.Size())/float64(b.N), "output-bytes/op")
 }
 

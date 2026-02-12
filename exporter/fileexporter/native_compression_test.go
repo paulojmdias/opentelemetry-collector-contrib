@@ -162,10 +162,11 @@ func TestNativeZstdCompression_WithNativeTools(t *testing.T) {
 	require.Positive(t, info.Size())
 
 	// Verify integrity
+	var stderrTest bytes.Buffer
 	cmd = exec.Command("zstd", "-t", path)
-	cmd.Stderr = &stderr
+	cmd.Stderr = &stderrTest
 	err = cmd.Run()
-	require.NoError(t, err, "zstd integrity test should pass: %s", stderr.String())
+	require.NoError(t, err, "zstd integrity test should pass: %s", stderrTest.String())
 }
 
 func TestLegacyCompression_WhenFeatureGateDisabled(t *testing.T) {
