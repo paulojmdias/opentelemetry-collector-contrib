@@ -236,23 +236,54 @@ func TestNativeZstdCompression_WithRotation(t *testing.T) {
 
 	require.NoError(t, fe.Start(t.Context(), componenttest.NewNopHost()))
 
-	// Write enough data to potentially trigger rotation
+	// Write enough data to trigger rotation
 	for range 100 {
 		require.NoError(t, fe.consumeTraces(t.Context(), td))
 	}
 
 	require.NoError(t, fe.Shutdown(t.Context()))
 
-	// Verify the active file is decompressible
-	compressed, err := os.ReadFile(path)
+	// Collect all files in the directory (active + rotated backups)
+	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.NotEmpty(t, compressed)
+	require.NotEmpty(t, entries, "expected at least one output file")
 
-	reader, err := zstd.NewReader(bytes.NewReader(compressed))
-	require.NoError(t, err)
-	defer reader.Close()
+	totalTraces := 0
+	unmarshaler := &ptrace.ProtoUnmarshaler{}
 
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.NotEmpty(t, decompressed)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		filePath := filepath.Join(dir, entry.Name())
+		compressed, err := os.ReadFile(filePath)
+		require.NoError(t, err, "failed to read file %s", entry.Name())
+		if len(compressed) == 0 {
+			continue
+		}
+
+		// Every file must be valid zstd
+		reader, err := zstd.NewReader(bytes.NewReader(compressed))
+		require.NoError(t, err, "file %s is not valid zstd", entry.Name())
+
+		decompressed, err := io.ReadAll(reader)
+		reader.Close()
+		require.NoError(t, err, "failed to decompress file %s", entry.Name())
+		require.NotEmpty(t, decompressed, "decompressed file %s is empty", entry.Name())
+
+		// Verify proto messages can be read from decompressed data
+		br := bufio.NewReader(bytes.NewReader(decompressed))
+		for {
+			buf, isEnd, err := readMessageFromStream(br)
+			require.NoError(t, err, "failed to read message from file %s", entry.Name())
+			if isEnd {
+				break
+			}
+			_, err = unmarshaler.UnmarshalTraces(buf)
+			require.NoError(t, err, "failed to unmarshal traces from file %s", entry.Name())
+			totalTraces++
+		}
+	}
+
+	require.Equal(t, 100, totalTraces, "expected all 100 traces to be recoverable across all files")
 }

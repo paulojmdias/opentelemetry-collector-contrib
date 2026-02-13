@@ -12,9 +12,16 @@ import (
 )
 
 // compressingWriter wraps an io.WriteCloser with streaming zstd compression.
-// It flushes a complete frame after each Write() call so that file rotation
-// (via timberjack) always splits at valid frame boundaries. The zstd decoder
-// handles concatenated frames natively.
+// It closes and resets the encoder after each Write() call so that every
+// write produces a complete, independently decompressible zstd frame.
+// This is essential for file rotation (via timberjack): since timberjack
+// can silently switch to a new file between writes, each file segment must
+// contain only complete frames. The zstd decoder handles concatenated
+// frames natively.
+//
+// Note: zstd.Encoder.Flush() only performs a block-level flush within an
+// open frame, it does NOT write the "last block" marker or CRC that make
+// the frame independently decompressible. Only Close() finalizes a frame.
 //
 // Thread safety: this type is not independently thread-safe. All calls are
 // serialized by the fileWriter.mutex in the caller. Do not use this type
@@ -67,13 +74,13 @@ func (c *compressingWriter) Write(p []byte) (int, error) {
 		c.err = err
 		return n, err
 	}
-	c.dirty = true
 
-	// Flush after each write to create complete frame boundaries.
-	// This ensures that when timberjack rotates the underlying file,
-	// each file segment contains only complete frames that are
-	// independently decompressible.
-	if err := c.flushFrame(); err != nil {
+	// Close the encoder to finalize the current zstd frame with the
+	// "last block" marker and CRC checksum. This makes the frame
+	// independently decompressible, which is required so that when
+	// timberjack rotates the underlying file, each file contains only
+	// complete frames.
+	if err := c.closeAndResetEncoder(); err != nil {
 		c.err = err
 		return n, err
 	}
@@ -81,16 +88,18 @@ func (c *compressingWriter) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func (c *compressingWriter) flushFrame() error {
-	if !c.dirty {
-		return nil
+// closeAndResetEncoder finalizes the current zstd frame by calling Close()
+// on the encoder, then resets it for the next write. Close() writes the
+// "last block" marker and CRC, producing a complete frame. Reset() reuses
+// the encoder's allocated buffers for efficiency.
+func (c *compressingWriter) closeAndResetEncoder() error {
+	if err := c.encoder.Close(); err != nil {
+		return err
 	}
 
-	// zstd Flush() completes the current frame, making it independently decompressible.
-	if f, ok := c.encoder.(interface{ Flush() error }); ok {
-		if err := f.Flush(); err != nil {
-			return err
-		}
+	// Reset the encoder so the next Write() starts a new frame.
+	if enc, ok := c.encoder.(*zstd.Encoder); ok {
+		enc.Reset(c.base)
 	}
 	c.dirty = false
 	return nil
@@ -98,20 +107,22 @@ func (c *compressingWriter) flushFrame() error {
 
 // Close finalizes the compression stream and closes the underlying writer.
 func (c *compressingWriter) Close() error {
-	var encoderErr error
-	if c.dirty {
-		encoderErr = c.encoder.Close()
-	} else if c.err == nil {
-		// Encoder has no pending data, but still needs to be closed to release resources.
-		encoderErr = c.encoder.Close()
-	}
+	// Close the encoder to finalize any in-progress frame and release resources.
+	// After closeAndResetEncoder in Write(), dirty is false and the encoder
+	// has been reset, but it still needs to be closed to release resources.
+	encoderErr := c.encoder.Close()
 	baseErr := c.base.Close()
 	return errors.Join(encoderErr, baseErr)
 }
 
 // flush is called by the flusher goroutine in fileWriter.
+// It finalizes the current frame if dirty, ensuring data is fully written
+// to the underlying writer as complete zstd frames.
 func (c *compressingWriter) flush() error {
-	return c.flushFrame()
+	if !c.dirty {
+		return nil
+	}
+	return c.closeAndResetEncoder()
 }
 
 // mapZstdCompressionLevel maps a generic level (0-22) to zstd.EncoderLevel.

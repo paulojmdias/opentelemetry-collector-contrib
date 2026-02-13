@@ -185,11 +185,12 @@ func newFileWriter(path string, shouldAppend bool, rotation *Rotation, flushInte
 		baseWriter = f
 	} else {
 		baseWriter = &timberjack.Logger{
-			Filename:   path,
-			MaxSize:    rotation.MaxMegabytes,
-			MaxAge:     rotation.MaxDays,
-			MaxBackups: rotation.MaxBackups,
-			LocalTime:  rotation.LocalTime,
+			Filename:    path,
+			MaxSize:     rotation.MaxMegabytes,
+			MaxAge:      rotation.MaxDays,
+			MaxBackups:  rotation.MaxBackups,
+			LocalTime:   rotation.LocalTime,
+			Compression: "none", // ensure compression is handled by the collector
 		}
 	}
 
