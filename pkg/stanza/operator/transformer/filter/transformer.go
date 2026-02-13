@@ -33,14 +33,12 @@ func (t *Transformer) ProcessBatch(ctx context.Context, entries []*entry.Entry) 
 
 		if err != nil {
 			t.Logger().Error("Running expressing returned an error", zap.Error(err))
-			filteredEntries = append(filteredEntries, ent)
 			continue
 		}
 
 		filtered, ok := matches.(bool)
 		if !ok {
 			t.Logger().Error("Expression did not compile as a boolean")
-			filteredEntries = append(filteredEntries, ent)
 			continue
 		}
 
