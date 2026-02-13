@@ -82,7 +82,9 @@ func (p *Parser) ProcessBatch(ctx context.Context, entries []*entry.Entry) error
 	for _, ent := range entries {
 		skip, err := p.Skip(ctx, ent)
 		if err != nil {
-			errs = append(errs, p.HandleEntryErrorWithWrite(ctx, ent, err, write))
+			if handleErr := p.HandleEntryErrorWithWrite(ctx, ent, err, write); handleErr != nil && !p.isQuietMode() {
+				errs = append(errs, handleErr)
+			}
 			continue
 		}
 		if skip {
@@ -94,7 +96,9 @@ func (p *Parser) ProcessBatch(ctx context.Context, entries []*entry.Entry) error
 		if format == "" {
 			format, err = p.detectFormat(ent)
 			if err != nil {
-				errs = append(errs, p.HandleEntryErrorWithWrite(ctx, ent, fmt.Errorf("failed to detect a valid container log format: %w", err), write))
+				if handleErr := p.HandleEntryErrorWithWrite(ctx, ent, fmt.Errorf("failed to detect a valid container log format: %w", err), write); handleErr != nil && !p.isQuietMode() {
+					errs = append(errs, handleErr)
+				}
 				continue
 			}
 		}
@@ -109,7 +113,9 @@ func (p *Parser) ProcessBatch(ctx context.Context, entries []*entry.Entry) error
 				continue
 			}
 			if err = p.handleTimeAndAttributeMappings(ent); err != nil {
-				errs = append(errs, p.HandleEntryErrorWithWrite(ctx, ent, err, write))
+				if handleErr := p.HandleEntryErrorWithWrite(ctx, ent, err, write); handleErr != nil && !p.isQuietMode() {
+					errs = append(errs, handleErr)
+				}
 				continue
 			}
 			_ = write(ctx, ent)
@@ -150,13 +156,17 @@ func (p *Parser) ProcessBatch(ctx context.Context, entries []*entry.Entry) error
 			}
 
 			if err = p.handleTimeAndAttributeMappings(ent); err != nil {
-				errs = append(errs, p.HandleEntryErrorWithWrite(ctx, ent, err, write))
+				if handleErr := p.HandleEntryErrorWithWrite(ctx, ent, err, write); handleErr != nil && !p.isQuietMode() {
+					errs = append(errs, handleErr)
+				}
 				continue
 			}
 			criEntries = append(criEntries, ent)
 
 		default:
-			errs = append(errs, p.HandleEntryErrorWithWrite(ctx, ent, errors.New("failed to detect a valid container log format"), write))
+			if handleErr := p.HandleEntryErrorWithWrite(ctx, ent, errors.New("failed to detect a valid container log format"), write); handleErr != nil && !p.isQuietMode() {
+				errs = append(errs, handleErr)
+			}
 		}
 	}
 
@@ -207,11 +217,10 @@ func (p *Parser) Process(ctx context.Context, entry *entry.Entry) (err error) {
 		p.timeLayout = goTimeLayout
 		err = p.ProcessWithCallback(ctx, entry, p.parseDocker, p.handleTimeAndAttributeMappings)
 		if err != nil {
-			handleErr := p.HandleEntryError(ctx, entry, fmt.Errorf("failed to process the docker log: %w", err))
 			if p.isQuietMode() {
 				return nil
 			}
-			return handleErr
+			return fmt.Errorf("failed to process the docker log: %w", err)
 		}
 	case containerdFormat, crioFormat:
 		p.criConsumerStartOnce.Do(func() {
@@ -232,22 +241,20 @@ func (p *Parser) Process(ctx context.Context, entry *entry.Entry) (err error) {
 			// parse the message
 			err = p.ParseWith(ctx, entry, p.parseContainerd, p.Write)
 			if err != nil {
-				handleErr := p.HandleEntryError(ctx, entry, fmt.Errorf("failed to parse containerd log: %w", err))
 				if p.isQuietMode() {
 					return nil
 				}
-				return handleErr
+				return fmt.Errorf("failed to parse containerd log: %w", err)
 			}
 			p.timeLayout = goTimeLayout
 		} else {
 			// parse the message
 			err = p.ParseWith(ctx, entry, p.parseCRIO, p.Write)
 			if err != nil {
-				handleErr := p.HandleEntryError(ctx, entry, fmt.Errorf("failed to parse crio log: %w", err))
 				if p.isQuietMode() {
 					return nil
 				}
-				return handleErr
+				return fmt.Errorf("failed to parse crio log: %w", err)
 			}
 			p.timeLayout = crioTimeLayout
 		}
