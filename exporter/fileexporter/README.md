@@ -99,7 +99,12 @@ For example, if your `path` is `data.json` and rotation is triggered, this file 
 
 ## File Compression
 Telemetry data is compressed according to the `compression` setting.
-`fileexporter` does not compress data by default. 
+`fileexporter` does not compress data by default.
+
+> [!NOTE]
+> An alpha feature gate `exporter.file.nativeCompression` is available that switches from
+> per-message compression to native file-level compression, producing standard `.zst` files
+> compatible with tools like `zstd -d`. See [Feature Gates](documentation.md) for details.
 
 Currently, `fileexporter` support the `zstd` compression algorithm, and we will support more compression algorithms in the future.
 
