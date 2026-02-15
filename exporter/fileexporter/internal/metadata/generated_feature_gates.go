@@ -10,6 +10,6 @@ var ExporterFileNativeCompressionFeatureGate = featuregate.GlobalRegistry().Must
 	"exporter.file.nativeCompression",
 	featuregate.StageAlpha,
 	featuregate.WithRegisterDescription("Use native file-level compression (zstd) instead of message-level compression. Creates standard .zst files compatible with standard decompression tools"),
-	featuregate.WithRegisterReferenceURL("https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/37961"),
+	featuregate.WithRegisterReferenceURL("https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/44077"),
 	featuregate.WithRegisterFromVersion("v0.146.0"),
 )
