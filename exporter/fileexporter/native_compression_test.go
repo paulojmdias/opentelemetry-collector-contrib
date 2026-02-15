@@ -15,6 +15,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component/componenttest"
+	"go.opentelemetry.io/collector/config/configcompression"
 	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/zap"
@@ -36,10 +37,12 @@ func TestNativeZstdCompression(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "telemetry.log.zst")
 	conf := &Config{
-		Path:             path,
-		FormatType:       formatTypeProto,
-		Compression:      compressionZSTD,
-		CompressionLevel: 3,
+		Path:        path,
+		FormatType:  formatTypeProto,
+		Compression: compressionZSTD,
+		CompressionParams: configcompression.CompressionParams{
+			Level: 3,
+		},
 	}
 
 	fe := &fileExporter{conf: conf}

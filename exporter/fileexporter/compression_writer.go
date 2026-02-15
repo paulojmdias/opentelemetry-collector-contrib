@@ -54,9 +54,8 @@ func newCompressingWriter(base io.WriteCloser, compression string, level int) (*
 func (c *compressingWriter) newEncoder() (io.WriteCloser, error) {
 	switch c.compression {
 	case compressionZSTD:
-		encoderLevel := mapZstdCompressionLevel(c.level)
 		return zstd.NewWriter(c.base,
-			zstd.WithEncoderLevel(encoderLevel),
+			zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(c.level)),
 			zstd.WithEncoderConcurrency(1),
 		)
 	default:
@@ -123,20 +122,4 @@ func (c *compressingWriter) flush() error {
 		return nil
 	}
 	return c.closeAndResetEncoder()
-}
-
-// mapZstdCompressionLevel maps a generic level (0-22) to zstd.EncoderLevel.
-func mapZstdCompressionLevel(level int) zstd.EncoderLevel {
-	switch {
-	case level <= 0:
-		return zstd.SpeedDefault
-	case level <= 3:
-		return zstd.SpeedFastest
-	case level <= 7:
-		return zstd.SpeedDefault
-	case level <= 12:
-		return zstd.SpeedBetterCompression
-	default:
-		return zstd.SpeedBestCompression
-	}
 }

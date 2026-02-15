@@ -5,12 +5,14 @@ package fileexporter // import "github.com/open-telemetry/opentelemetry-collecto
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configcompression"
 	"go.opentelemetry.io/collector/confmap"
 )
 
@@ -53,9 +55,13 @@ type Config struct {
 	// Supported compression algorithms:`zstd`
 	Compression string `mapstructure:"compression"`
 
-	// CompressionLevel sets the compression level.
-	// Zstd: 0 (default) to 22.
-	CompressionLevel int `mapstructure:"compression_level"`
+	// CompressionParams defines compression parameters.
+	// For zstd the following levels are supported:
+	//   - SpeedFastest: 1
+	//   - SpeedDefault: 3
+	//   - SpeedBetterCompression: 6
+	//   - SpeedBestCompression: 11
+	CompressionParams configcompression.CompressionParams `mapstructure:"compression_params"`
 
 	// FlushInterval is the duration between flushes.
 	// See time.ParseDuration for valid values.
@@ -129,11 +135,11 @@ func (cfg *Config) Validate() error {
 	if cfg.Compression != "" && cfg.Compression != compressionZSTD {
 		return errors.New("compression is not supported")
 	}
-	if cfg.CompressionLevel < 0 {
-		return errors.New("compression_level must not be negative")
-	}
-	if cfg.Compression == compressionZSTD && cfg.CompressionLevel > 22 {
-		return errors.New("compression_level for zstd must be between 0 and 22")
+	if cfg.Compression != "" {
+		ct := configcompression.Type(cfg.Compression)
+		if err := ct.ValidateParams(cfg.CompressionParams); err != nil {
+			return fmt.Errorf("invalid compression_params: %w", err)
+		}
 	}
 	if cfg.FlushInterval < 0 {
 		return errors.New("flush_interval must be larger than zero")

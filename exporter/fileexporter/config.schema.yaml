@@ -36,9 +36,13 @@ properties:
   compression:
     description: Compression Codec used to export telemetry data Supported compression algorithms:`zstd`
     type: string
-  compression_level:
-    description: 'CompressionLevel sets the compression level. Zstd: 0 (default) to 22.'
-    type: integer
+  compression_params:
+    description: 'CompressionParams defines compression parameters. For zstd: SpeedFastest=1, SpeedDefault=3, SpeedBetterCompression=6, SpeedBestCompression=11.'
+    type: object
+    properties:
+      level:
+        description: 'Compression level. For zstd: 1 (SpeedFastest), 3 (SpeedDefault), 6 (SpeedBetterCompression), 11 (SpeedBestCompression).'
+        type: integer
   create_directory:
     description: CreateDirectory specifies that the parent directory of the output file should be created automatically on start.
     type: boolean
