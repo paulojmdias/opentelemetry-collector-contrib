@@ -16,6 +16,7 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/entry"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/fileconsumer/attrs"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/helper"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/transformer/recombine"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/testutil"
 )
@@ -1303,9 +1304,11 @@ func TestUnlimitedBatchSize(t *testing.T) {
 
 func TestContainerQuietModeProcess(t *testing.T) {
 	testCases := []struct {
-		name        string
-		onError     string
-		expectError bool
+		name             string
+		onError          string
+		useFailingOutput bool
+		expectError      bool
+		expectWriteError bool
 	}{
 		{
 			name:        "DropOnErrorQuiet_ReturnsNoError",
@@ -1327,6 +1330,13 @@ func TestContainerQuietModeProcess(t *testing.T) {
 			onError:     "send",
 			expectError: true,
 		},
+		{
+			name:             "SendOnErrorQuiet_WriteFailure_PropagatesWriteError",
+			onError:          "send_quiet",
+			useFailingOutput: true,
+			expectError:      true,
+			expectWriteError: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1339,7 +1349,12 @@ func TestContainerQuietModeProcess(t *testing.T) {
 			op, err := config.Build(set)
 			require.NoError(t, err)
 
-			fake := testutil.NewFakeOutput(t)
+			var fake operator.Operator
+			if tc.useFailingOutput {
+				fake = testutil.NewFakeOutputWithProcessError(t)
+			} else {
+				fake = testutil.NewFakeOutput(t)
+			}
 			require.NoError(t, op.SetOutputs([]operator.Operator{fake}))
 
 			// Create entry with invalid container log format that will cause parse error
@@ -1349,7 +1364,11 @@ func TestContainerQuietModeProcess(t *testing.T) {
 
 			err = op.Process(t.Context(), e)
 			if tc.expectError {
-				require.Error(t, err, "expected error in non-quiet mode")
+				require.Error(t, err, "expected error")
+				if tc.expectWriteError {
+					var writeErr *helper.WriteError
+					require.ErrorAs(t, err, &writeErr, "write errors must propagate even in quiet mode")
+				}
 			} else {
 				require.NoError(t, err, "expected no error in quiet mode")
 			}

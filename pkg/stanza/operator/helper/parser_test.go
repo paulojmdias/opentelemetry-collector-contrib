@@ -703,6 +703,65 @@ func NewTestParserConfig() ParserConfig {
 	return expect
 }
 
+func TestProcessWithCallback_QuietMode_PropagatesWriteError(t *testing.T) {
+	testCases := []struct {
+		name        string
+		onError     string
+		expectError bool
+	}{
+		{
+			name:        "SendOnErrorQuiet_WriteFailure_PropagatesWriteError",
+			onError:     SendOnErrorQuiet,
+			expectError: true,
+		},
+		{
+			name:        "DropOnErrorQuiet_ParseFailure_SuppressesError",
+			onError:     DropOnErrorQuiet,
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeOut := testutil.NewFakeOutputWithProcessError(t)
+			set := componenttest.NewNopTelemetrySettings()
+			set.Logger = zaptest.NewLogger(t)
+			writer := &WriterOperator{
+				BasicOperator: BasicOperator{
+					OperatorID:   "test-id",
+					OperatorType: "test-type",
+					set:          set,
+				},
+				OutputIDs: []string{fakeOut.ID()},
+			}
+			require.NoError(t, writer.SetOutputs([]operator.Operator{fakeOut}))
+
+			parser := ParserOperator{
+				TransformerOperator: TransformerOperator{
+					WriterOperator: *writer,
+					OnError:        tc.onError,
+				},
+				ParseFrom: entry.NewBodyField(),
+			}
+
+			parse := func(_ any) (any, error) {
+				return nil, errors.New("parse failure")
+			}
+
+			ctx := t.Context()
+			testEntry := entry.New()
+			err := parser.ProcessWithCallback(ctx, testEntry, parse, nil)
+			if tc.expectError {
+				require.Error(t, err, "write errors must propagate even in quiet mode")
+				var writeErr *WriteError
+				require.ErrorAs(t, err, &writeErr, "error should be a WriteError")
+			} else {
+				require.NoError(t, err, "processing errors should be suppressed in quiet mode")
+			}
+		})
+	}
+}
+
 func writerWithFakeOut(t *testing.T) (*WriterOperator, *testutil.FakeOutput) {
 	fakeOut := testutil.NewFakeOutput(t)
 	set := componenttest.NewNopTelemetrySettings()

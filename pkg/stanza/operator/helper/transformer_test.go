@@ -741,3 +741,127 @@ func TestTransformerIf(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestHandleEntryErrorWithWrite_ReturnsWriteError(t *testing.T) {
+	testCases := []struct {
+		name           string
+		onError        string
+		expectWriteErr bool
+	}{
+		{
+			name:           "SendOnError_WriteFailure_ReturnsWriteError",
+			onError:        SendOnError,
+			expectWriteErr: true,
+		},
+		{
+			name:           "SendOnErrorQuiet_WriteFailure_ReturnsWriteError",
+			onError:        SendOnErrorQuiet,
+			expectWriteErr: true,
+		},
+		{
+			name:           "DropOnError_WriteNotCalled_ReturnsOriginalError",
+			onError:        DropOnError,
+			expectWriteErr: false,
+		},
+		{
+			name:           "DropOnErrorQuiet_WriteNotCalled_ReturnsOriginalError",
+			onError:        DropOnErrorQuiet,
+			expectWriteErr: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			set := componenttest.NewNopTelemetrySettings()
+			set.Logger = zaptest.NewLogger(t)
+
+			transformer := TransformerOperator{
+				OnError: tc.onError,
+				WriterOperator: WriterOperator{
+					BasicOperator: BasicOperator{
+						OperatorID:   "test-id",
+						OperatorType: "test-type",
+						set:          set,
+					},
+				},
+			}
+
+			testEntry := entry.New()
+			failingWrite := func(_ context.Context, _ *entry.Entry) error {
+				return errors.New("downstream write failure")
+			}
+
+			err := transformer.HandleEntryErrorWithWrite(t.Context(), testEntry, errors.New("processing error"), failingWrite)
+			require.Error(t, err)
+
+			var writeErr *WriteError
+			if tc.expectWriteErr {
+				require.ErrorAs(t, err, &writeErr, "expected WriteError type")
+				require.Contains(t, writeErr.Error(), "downstream write failure")
+			} else {
+				require.NotErrorAs(t, err, &writeErr, "did not expect WriteError for drop mode")
+				require.Contains(t, err.Error(), "processing error")
+			}
+		})
+	}
+}
+
+func TestProcessWith_QuietMode_PropagatesWriteError(t *testing.T) {
+	testCases := []struct {
+		name        string
+		onError     string
+		expectError bool
+	}{
+		{
+			name:        "SendOnErrorQuiet_WriteFailure_PropagatesError",
+			onError:     SendOnErrorQuiet,
+			expectError: true,
+		},
+		{
+			name:        "DropOnErrorQuiet_TransformFailure_SuppressesError",
+			onError:     DropOnErrorQuiet,
+			expectError: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := &testutil.Operator{}
+			output.On("ID").Return("test-output")
+			output.On("CanProcess").Return(true)
+			// Make the downstream write fail
+			output.On("Process", mock.Anything, mock.Anything).Return(errors.New("downstream failure"))
+
+			set := componenttest.NewNopTelemetrySettings()
+			set.Logger = zaptest.NewLogger(t)
+
+			transformer := TransformerOperator{
+				OnError: tc.onError,
+				WriterOperator: WriterOperator{
+					BasicOperator: BasicOperator{
+						OperatorID:   "test-id",
+						OperatorType: "test-type",
+						set:          set,
+					},
+					OutputOperators: []operator.Operator{output},
+					OutputIDs:       []string{"test-output"},
+				},
+			}
+
+			ctx := t.Context()
+			testEntry := entry.New()
+			transform := func(_ *entry.Entry) error {
+				return errors.New("transform failure")
+			}
+
+			err := transformer.ProcessWith(ctx, testEntry, transform)
+			if tc.expectError {
+				require.Error(t, err, "write errors must propagate even in quiet mode")
+				var writeErr *WriteError
+				require.ErrorAs(t, err, &writeErr, "error should be a WriteError")
+			} else {
+				require.NoError(t, err, "non-write errors should be suppressed in quiet mode")
+			}
+		})
+	}
+}

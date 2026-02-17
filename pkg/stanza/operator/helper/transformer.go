@@ -107,8 +107,8 @@ func (t *TransformerOperator) ProcessBatchWithTransform(ctx context.Context, ent
 
 		if err = transform(ent); err != nil {
 			if handleErr := t.HandleEntryErrorWithWrite(ctx, ent, err, write); handleErr != nil {
-				// Only append error if not in quiet mode
-				if !t.isQuietMode() {
+				var writeErr *WriteError
+				if !t.isQuietMode() || errors.As(handleErr, &writeErr) {
 					errs = append(errs, handleErr)
 				}
 			}
@@ -136,8 +136,8 @@ func (t *TransformerOperator) ProcessWith(ctx context.Context, entry *entry.Entr
 
 	if err := transform(entry); err != nil {
 		handleErr := t.HandleEntryError(ctx, entry, err)
-		// Return nil for quiet modes to prevent error from bubbling up
-		if t.isQuietMode() {
+		var writeErr *WriteError
+		if t.isQuietMode() && !errors.As(handleErr, &writeErr) {
 			return nil
 		}
 		return handleErr
@@ -165,7 +165,7 @@ func (t *TransformerOperator) HandleEntryErrorWithWrite(ctx context.Context, ent
 	}
 	if t.OnError == SendOnError || t.OnError == SendOnErrorQuiet {
 		if writeErr := write(ctx, entry); writeErr != nil {
-			err = fmt.Errorf("failed to send entry after error: %w", writeErr)
+			return &WriteError{Err: fmt.Errorf("failed to send entry after error: %w", writeErr)}
 		}
 	}
 
@@ -210,6 +210,20 @@ type ProcessFunction = func(context.Context, *entry.Entry) error
 
 // TransformFunction is function that transforms an entry.
 type TransformFunction = func(*entry.Entry) error
+
+// WriteError wraps errors that occur when writing/sending entries downstream.
+// These should not be suppressed in quiet mode.
+type WriteError struct {
+	Err error
+}
+
+func (e *WriteError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *WriteError) Unwrap() error {
+	return e.Err
+}
 
 // SendOnError specifies an on_error mode for sending entries after an error.
 const SendOnError = "send"

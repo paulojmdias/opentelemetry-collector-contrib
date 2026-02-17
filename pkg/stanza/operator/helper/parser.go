@@ -117,7 +117,8 @@ func (p *ParserOperator) ProcessBatchWithCallback(ctx context.Context, entries [
 		}
 
 		if err = p.ParseWith(ctx, ent, parse, write); err != nil {
-			if p.OnError != DropOnErrorQuiet && p.OnError != SendOnErrorQuiet {
+			var writeErr *WriteError
+			if (p.OnError != DropOnErrorQuiet && p.OnError != SendOnErrorQuiet) || errors.As(err, &writeErr) {
 				errs = append(errs, err)
 			}
 			continue
@@ -153,7 +154,8 @@ func (p *ParserOperator) ProcessWithCallback(ctx context.Context, entry *entry.E
 	}
 
 	if err = p.ParseWith(ctx, entry, parse, p.Write); err != nil {
-		if p.OnError == DropOnErrorQuiet || p.OnError == SendOnErrorQuiet {
+		var writeErr *WriteError
+		if (p.OnError == DropOnErrorQuiet || p.OnError == SendOnErrorQuiet) && !errors.As(err, &writeErr) {
 			return nil
 		}
 
