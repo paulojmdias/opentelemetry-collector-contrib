@@ -74,6 +74,8 @@ func (c *compressingWriter) Write(p []byte) (int, error) {
 		return n, err
 	}
 
+	c.dirty = true
+
 	// Close the encoder to finalize the current zstd frame with the
 	// "last block" marker and CRC checksum. This makes the frame
 	// independently decompressible, which is required so that when
