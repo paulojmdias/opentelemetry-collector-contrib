@@ -4,7 +4,7 @@
 change_type: "breaking"
 
 # The name of the component, or a single word describing the area of concern, (e.g. receiver/filelog)
-component: "processor/resourcedetectionprocessor"
+component: "processor/resourcedetection"
 
 # A brief description of the change.  Surround your text with quotes ("") if it needs to start with a backtick (`).
 note: "Changed cloud platform value for Azure EKS from `azure_eks` to `azure.eks` to align with OpenTelemetry semantic conventions v1.39.0."
