@@ -11,9 +11,9 @@ import (
 	"go.opentelemetry.io/collector/component/componenttest"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/entry"
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/errors"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/operator/helper"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/stanzaerrors"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza/testutil"
 )
 
@@ -195,7 +195,7 @@ func TestTransformer(t *testing.T) {
 			mock1.On(
 				"ProcessBatch", mock.Anything, mock.Anything,
 			).Return(
-				errors.NewError("Operator can not process logs.", ""),
+				stanzaerrors.NewError("Operator can not process logs.", ""),
 			).Run(func(args mock.Arguments) {
 				entries := args.Get(1).([]*entry.Entry)
 				results["output1"] += len(entries)
