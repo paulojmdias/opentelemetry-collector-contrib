@@ -143,6 +143,7 @@ extension/asapauthextension
 internal/aws/proxy
 extension/awsproxy
 extension/azureauthextension
+extension/internal/credentialsfile
 extension/basicauthextension
 extension/bearertokenauthextension
 extension/cgroupruntimeextension
@@ -248,7 +249,6 @@ receiver/awsxrayreceiver
 receiver/azureblobreceiver
 receiver/azureeventhubreceiver
 receiver/azuremonitorreceiver
-receiver/bigipreceiver
 receiver/chronyreceiver
 receiver/ciscoosreceiver
 receiver/cloudflarereceiver
