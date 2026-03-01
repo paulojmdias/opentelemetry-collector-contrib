@@ -15,7 +15,6 @@ import (
 	zipkinmodel "github.com/openzipkin/zipkin-go/model"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
-	conventionsv112 "go.opentelemetry.io/otel/semconv/v1.12.0"
 	conventionsv125 "go.opentelemetry.io/otel/semconv/v1.25.0"
 	conventions "go.opentelemetry.io/otel/semconv/v1.38.0"
 
@@ -325,9 +324,9 @@ func zipkinEndpointFromTags(
 
 	var ipKey, portKey string
 	if remoteEndpoint {
-		ipKey, portKey = string(conventionsv112.NetPeerIPKey), string(conventionsv125.NetPeerPortKey)
+		ipKey, portKey = string(conventions.NetworkPeerAddressKey), string(conventionsv125.NetPeerPortKey)
 	} else {
-		ipKey, portKey = string(conventionsv112.NetHostIPKey), string(conventionsv125.NetHostPortKey)
+		ipKey, portKey = string(conventions.NetworkLocalAddressKey), string(conventionsv125.NetHostPortKey)
 	}
 
 	var ip net.IP
