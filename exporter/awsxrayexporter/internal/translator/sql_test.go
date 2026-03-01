@@ -15,13 +15,11 @@ import (
 
 func TestClientSpanWithStatementAttribute(t *testing.T) {
 	attributes := make(map[string]pcommon.Value)
-	attributes["db.system"] = pcommon.NewValueStr("mysql")
-	attributes["db.name"] = pcommon.NewValueStr("customers")
-	attributes["db.statement"] = pcommon.NewValueStr("SELECT * FROM user WHERE user_id = ?")
-	attributes["db.user"] = pcommon.NewValueStr("readonly_user")
-	attributes["db.connection_string"] = pcommon.NewValueStr("mysql://db.example.com:3306")
-	attributes["net.peer.name"] = pcommon.NewValueStr("db.example.com")
-	attributes["net.peer.port"] = pcommon.NewValueStr("3306")
+	attributes["db.system.name"] = pcommon.NewValueStr("mysql")
+	attributes["db.namespace"] = pcommon.NewValueStr("customers")
+	attributes["db.query.text"] = pcommon.NewValueStr("SELECT * FROM user WHERE user_id = ?")
+	attributes["user.name"] = pcommon.NewValueStr("readonly_user")
+	attributes["server.address"] = pcommon.NewValueStr("db.example.com")
 	span := constructSQLSpan(attributes)
 
 	filtered, sqlData := makeSQL(span, attributes)
@@ -33,18 +31,16 @@ func TestClientSpanWithStatementAttribute(t *testing.T) {
 	require.NoError(t, w.Encode(sqlData))
 	jsonStr := w.String()
 	testWriters.release(w)
-	assert.Contains(t, jsonStr, "mysql://db.example.com:3306/customers")
+	assert.Contains(t, jsonStr, "db.example.com/customers")
 }
 
 func TestClientSpanWithNonSQLDatabase(t *testing.T) {
 	attributes := make(map[string]pcommon.Value)
-	attributes["db.system"] = pcommon.NewValueStr("redis")
-	attributes["db.name"] = pcommon.NewValueStr("0")
-	attributes["db.statement"] = pcommon.NewValueStr("SET key value")
-	attributes["db.user"] = pcommon.NewValueStr("readonly_user")
-	attributes["db.connection_string"] = pcommon.NewValueStr("redis://db.example.com:3306")
-	attributes["net.peer.name"] = pcommon.NewValueStr("db.example.com")
-	attributes["net.peer.port"] = pcommon.NewValueStr("3306")
+	attributes["db.system.name"] = pcommon.NewValueStr("redis")
+	attributes["db.namespace"] = pcommon.NewValueStr("0")
+	attributes["db.query.text"] = pcommon.NewValueStr("SET key value")
+	attributes["user.name"] = pcommon.NewValueStr("readonly_user")
+	attributes["server.address"] = pcommon.NewValueStr("db.example.com")
 	span := constructSQLSpan(attributes)
 
 	filtered, sqlData := makeSQL(span, attributes)
@@ -54,13 +50,10 @@ func TestClientSpanWithNonSQLDatabase(t *testing.T) {
 
 func TestClientSpanWithoutDBurlAttribute(t *testing.T) {
 	attributes := make(map[string]pcommon.Value)
-	attributes["db.system"] = pcommon.NewValueStr("postgresql")
-	attributes["db.name"] = pcommon.NewValueStr("customers")
-	attributes["db.statement"] = pcommon.NewValueStr("SELECT * FROM user WHERE user_id = ?")
-	attributes["db.user"] = pcommon.NewValueStr("readonly_user")
-	attributes["db.connection_string"] = pcommon.NewValueStr("")
-	attributes["net.peer.name"] = pcommon.NewValueStr("db.example.com")
-	attributes["net.peer.port"] = pcommon.NewValueStr("3306")
+	attributes["db.system.name"] = pcommon.NewValueStr("postgresql")
+	attributes["db.namespace"] = pcommon.NewValueStr("customers")
+	attributes["db.query.text"] = pcommon.NewValueStr("SELECT * FROM user WHERE user_id = ?")
+	attributes["user.name"] = pcommon.NewValueStr("readonly_user")
 	span := constructSQLSpan(attributes)
 
 	filtered, sqlData := makeSQL(span, attributes)
