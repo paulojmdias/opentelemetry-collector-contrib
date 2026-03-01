@@ -28,7 +28,6 @@ require (
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	go.opentelemetry.io/collector/featuregate v1.52.1-0.20260227062254-168030d61d7d // indirect
 	go.opentelemetry.io/collector/pdata/pprofile v0.146.2-0.20260227062254-168030d61d7d // indirect
-	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
