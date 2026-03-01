@@ -150,3 +150,63 @@ jobs:
             echo "One or more matrix jobs failed."
             false
           fi
+
+  openshift-test-matrix:
+    env:
+      KUBECONFIG: /tmp/kube-config-otelcol-e2e-testing
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - processor/resourcedetectionprocessor
+    runs-on: ubuntu-24.04
+    needs: docker-build
+    # Non-blocking initially while we validate MicroShift stability in CI
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/setup-go-tools
+        with:
+          go-version: oldstable
+      - name: Free disk space
+        run: ./.github/workflows/scripts/free-disk-space.sh
+      - name: Start MicroShift via CRC
+        uses: crc-org/crc-github-action@466b8741bd91b9ee59f37db92b69f285cacada41 # v1.0.1
+        with:
+          preset: microshift
+      - name: Export KUBECONFIG for MicroShift
+        run: |
+          mkdir -p /tmp
+          eval $(crc oc-env)
+          oc config view --raw > /tmp/kube-config-otelcol-e2e-testing
+      - name: Download artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: otelcontribcol
+          path: /tmp
+      - name: Load Docker image into MicroShift
+        run: |
+          eval $(crc podman-env)
+          podman load < /tmp/otelcontribcol.tar
+      - name: Run OpenShift E2E tests
+        run: |
+          cd ${{ matrix.component }}
+          go test -v --tags=e2e -run TestE2EOpenShiftRealCluster
+      - run: ./.github/workflows/scripts/check-disk-space.sh
+
+  openshift-test:
+    if: ${{ github.actor != 'dependabot[bot]' && always() }}
+    runs-on: ubuntu-24.04
+    needs: [openshift-test-matrix]
+    steps:
+      - name: Print result
+        run: echo ${{ needs.openshift-test-matrix.result }}
+      - name: Interpret result
+        run: |
+          if [[ success == ${{ needs.openshift-test-matrix.result }} ]]
+          then
+            echo "All OpenShift matrix jobs passed!"
+          else
+            echo "One or more OpenShift matrix jobs failed."
+            false
+          fi
