@@ -196,8 +196,9 @@ func TestScalewayDetector_Detect_OK(t *testing.T) {
 	assert.Equal(t, want, attrs)
 }
 
-func TestScalewayDetector_NotOnScaleway(t *testing.T) {
-	// 404 everything to simulate "metadata not reachable"
+func TestScalewayDetector_MetadataUnavailable(t *testing.T) {
+	// 404 everything — metadata server unreachable.
+	// Detect() must return an error so the retry loop fires.
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
 
@@ -213,7 +214,8 @@ func TestScalewayDetector_NotOnScaleway(t *testing.T) {
 	require.NoError(t, err)
 
 	res, schemaURL, err := det.Detect(t.Context())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scaleway metadata unavailable")
 	assert.True(t, internal.IsEmptyResource(res))
 	assert.Empty(t, schemaURL)
 }

@@ -95,8 +95,9 @@ func TestDigitalOceanDetector_Detect_OK_JSON(t *testing.T) {
 	assert.Equal(t, want, attrs)
 }
 
-func TestDigitalOceanDetector_NotOnDigitalOcean_JSON(t *testing.T) {
-	// 404 everything (including /metadata/v1.json)
+func TestDigitalOceanDetector_MetadataUnavailable_JSON(t *testing.T) {
+	// 404 everything — metadata server unreachable.
+	// Detect() must return an error so the retry loop fires.
 	srv := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(srv.Close)
 
@@ -117,7 +118,8 @@ func TestDigitalOceanDetector_NotOnDigitalOcean_JSON(t *testing.T) {
 	require.NoError(t, err)
 
 	res, schemaURL, err := det.Detect(t.Context())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "digitalocean metadata unavailable")
 	assert.True(t, internal.IsEmptyResource(res))
 	assert.Empty(t, schemaURL)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
 	"go.opentelemetry.io/collector/confmap/xconfmap"
@@ -24,6 +25,13 @@ import (
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor/internal/openshift"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor/internal/system"
 )
+
+func defaultTestRetryConfig() configretry.BackOffConfig {
+	r := configretry.NewDefaultBackOffConfig()
+	r.Enabled = false
+	r.MaxElapsedTime = 0
+	return r
+}
 
 func TestLoadConfig(t *testing.T) {
 	t.Parallel()
@@ -76,6 +84,7 @@ func TestLoadConfig(t *testing.T) {
 				DetectorConfig: openshiftConfig,
 				ClientConfig:   cfg,
 				Override:       false,
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -85,6 +94,7 @@ func TestLoadConfig(t *testing.T) {
 				ClientConfig:   cfg,
 				Override:       false,
 				DetectorConfig: detectorCreateDefaultConfig(),
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -94,6 +104,7 @@ func TestLoadConfig(t *testing.T) {
 				DetectorConfig: ec2Config,
 				ClientConfig:   cfg,
 				Override:       false,
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -103,6 +114,7 @@ func TestLoadConfig(t *testing.T) {
 				DetectorConfig: systemConfig,
 				ClientConfig:   cfg,
 				Override:       false,
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -112,6 +124,7 @@ func TestLoadConfig(t *testing.T) {
 				ClientConfig:   cfg,
 				Override:       false,
 				DetectorConfig: detectorCreateDefaultConfig(),
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -121,6 +134,7 @@ func TestLoadConfig(t *testing.T) {
 				ClientConfig:   cfg,
 				Override:       false,
 				DetectorConfig: detectorCreateDefaultConfig(),
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -130,6 +144,7 @@ func TestLoadConfig(t *testing.T) {
 				ClientConfig:   cfg,
 				Override:       false,
 				DetectorConfig: resourceAttributesConfig,
+				Retry:          defaultTestRetryConfig(),
 			},
 		},
 		{
@@ -140,6 +155,7 @@ func TestLoadConfig(t *testing.T) {
 				Override:        false,
 				DetectorConfig:  detectorCreateDefaultConfig(),
 				RefreshInterval: 5 * time.Second,
+				Retry:           defaultTestRetryConfig(),
 			},
 		},
 		{

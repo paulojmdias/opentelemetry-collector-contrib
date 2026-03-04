@@ -5,6 +5,7 @@ package aks // import "github.com/open-telemetry/opentelemetry-collector-contrib
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
@@ -44,9 +45,8 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 	}
 
 	m, err := d.provider.Metadata(ctx)
-	// If we can't get a response from the metadata endpoint, we're not running in Azure
 	if err != nil {
-		return res, "", nil
+		return res, "", fmt.Errorf("aks metadata unavailable: %w", err)
 	}
 
 	attrs := res.Attributes()

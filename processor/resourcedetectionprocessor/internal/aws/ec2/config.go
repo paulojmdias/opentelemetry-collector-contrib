@@ -15,11 +15,19 @@ import (
 type Config struct {
 	// Tags is a list of regex's to match ec2 instance tag keys that users want
 	// to add as resource attributes to processed data
-	Tags                  []string                          `mapstructure:"tags"`
-	ResourceAttributes    metadata.ResourceAttributesConfig `mapstructure:"resource_attributes"`
-	MaxAttempts           int                               `mapstructure:"max_attempts"`
-	MaxBackoff            time.Duration                     `mapstructure:"max_backoff"`
-	FailOnMissingMetadata bool                              `mapstructure:"fail_on_missing_metadata"`
+	Tags               []string                          `mapstructure:"tags"`
+	ResourceAttributes metadata.ResourceAttributesConfig `mapstructure:"resource_attributes"`
+	// Deprecated: MaxAttempts configures AWS SDK HTTP-level retries for EC2/IMDS API calls.
+	// This controls low-level SDK retries within a single Detect() call, which is semantically
+	// different from the processor-level retry.max_elapsed_time that controls how many times
+	// Detect() itself is retried on failure. This field remains functional but may be removed
+	// in a future release.
+	MaxAttempts int `mapstructure:"max_attempts"`
+	// Deprecated: MaxBackoff configures the maximum backoff duration for AWS SDK HTTP-level
+	// retries within a single Detect() call. Use the processor-level retry.max_interval
+	// to control backoff between Detect() retries.
+	MaxBackoff            time.Duration `mapstructure:"max_backoff"`
+	FailOnMissingMetadata bool          `mapstructure:"fail_on_missing_metadata"`
 	// TagsFromIMDS controls whether instance tags are fetched via IMDS (true)
 	// or via the EC2 DescribeTags API (false, default).
 	// IMDS does not require IAM permissions but requires InstanceMetadataTags=enabled on the instance.

@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/xconsumer"
 	"go.opentelemetry.io/collector/processor"
@@ -112,12 +113,19 @@ func (*factory) Type() component.Type {
 }
 
 func createDefaultConfig() component.Config {
+	retryConfig := configretry.NewDefaultBackOffConfig()
+	// Disabled by default for backward compatibility. Users opt in by setting retry.enabled: true.
+	// When enabled, max_elapsed_time=0 means retries continue until the startup context is cancelled;
+	// users can set max_elapsed_time to bound the total wait.
+	retryConfig.Enabled = false
+	retryConfig.MaxElapsedTime = 0
 	return &Config{
 		Detectors:       []string{env.TypeStr},
 		ClientConfig:    defaultClientConfig(),
 		Override:        true,
 		DetectorConfig:  detectorCreateDefaultConfig(),
 		RefreshInterval: 0,
+		Retry:           retryConfig,
 		// TODO: Once issue(https://github.com/open-telemetry/opentelemetry-collector/issues/4001) gets resolved,
 		//		 Set the default value of 'hostname_source' here instead of 'system' detector
 	}
@@ -226,7 +234,7 @@ func (f *factory) getResourceDetectionProcessor(
 	cfg component.Config,
 ) (*resourceDetectionProcessor, error) {
 	oCfg := cfg.(*Config)
-	provider, err := f.getResourceProvider(params, oCfg.Timeout, oCfg.Detectors, oCfg.DetectorConfig)
+	provider, err := f.getResourceProvider(params, oCfg.Timeout, oCfg.Retry, oCfg.Detectors, oCfg.DetectorConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -243,6 +251,7 @@ func (f *factory) getResourceDetectionProcessor(
 func (f *factory) getResourceProvider(
 	params processor.Settings,
 	timeout time.Duration,
+	retryConfig configretry.BackOffConfig,
 	configuredDetectors []string,
 	detectorConfigs DetectorConfig,
 ) (*internal.ResourceProvider, error) {
@@ -258,7 +267,7 @@ func (f *factory) getResourceProvider(
 		detectorTypes = append(detectorTypes, internal.DetectorType(strings.TrimSpace(key)))
 	}
 
-	provider, err := f.resourceProviderFactory.CreateResourceProvider(params, timeout, &detectorConfigs, detectorTypes...)
+	provider, err := f.resourceProviderFactory.CreateResourceProvider(params, timeout, retryConfig, &detectorConfigs, detectorTypes...)
 	if err != nil {
 		return nil, err
 	}

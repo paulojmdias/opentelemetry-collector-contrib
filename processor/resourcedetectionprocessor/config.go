@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/config/confighttp"
+	"go.opentelemetry.io/collector/config/configretry"
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor/internal"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor/internal/akamai"
@@ -52,6 +53,17 @@ type Config struct {
 	// If > 0, periodically re-run detection for all configured detectors.
 	// When 0 (default), no periodic refresh occurs.
 	RefreshInterval time.Duration `mapstructure:"refresh_interval"`
+	// Retry defines the retry behavior for resource detection at startup.
+	// Network-based detectors (GCP, AWS, Azure, etc.) will be retried on failure
+	// according to this policy. Local detectors (env, system, etc.) fail immediately
+	// without retrying.
+	Retry configretry.BackOffConfig `mapstructure:"retry"`
+	// FailOnMissingMetadata controls whether network-based detectors treat an unreachable
+	// metadata server as a hard failure (returning an error) rather than silently returning
+	// an empty resource. When combined with retry.enabled=true, this allows the processor
+	// to retry until the metadata server becomes available at startup.
+	// Defaults to false for backward compatibility.
+	FailOnMissingMetadata bool `mapstructure:"fail_on_missing_metadata"`
 }
 
 // DetectorConfig contains user-specified configurations unique to all individual detectors

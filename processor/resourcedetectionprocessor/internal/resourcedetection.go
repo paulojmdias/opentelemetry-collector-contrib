@@ -15,6 +15,7 @@ import (
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v5"
+	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
@@ -48,6 +49,7 @@ func NewProviderFactory(detectors map[DetectorType]DetectorFactory) *ResourcePro
 func (f *ResourceProviderFactory) CreateResourceProvider(
 	params processor.Settings,
 	timeout time.Duration,
+	retryConfig configretry.BackOffConfig,
 	detectorConfigs ResourceDetectorConfig,
 	detectorTypes ...DetectorType,
 ) (*ResourceProvider, error) {
@@ -56,7 +58,7 @@ func (f *ResourceProviderFactory) CreateResourceProvider(
 		return nil, err
 	}
 
-	provider := NewResourceProvider(params.Logger, timeout, detectors...)
+	provider := NewResourceProvider(params.Logger, timeout, retryConfig, detectors...)
 	return provider, nil
 }
 
@@ -82,6 +84,7 @@ func (f *ResourceProviderFactory) getDetectors(params processor.Settings, detect
 type ResourceProvider struct {
 	logger           *zap.Logger
 	timeout          time.Duration
+	retryConfig      configretry.BackOffConfig
 	detectors        []Detector
 	detectedResource atomic.Pointer[resourceResult]
 
@@ -97,10 +100,11 @@ type resourceResult struct {
 	err       error
 }
 
-func NewResourceProvider(logger *zap.Logger, timeout time.Duration, detectors ...Detector) *ResourceProvider {
+func NewResourceProvider(logger *zap.Logger, timeout time.Duration, retryConfig configretry.BackOffConfig, detectors ...Detector) *ResourceProvider {
 	return &ResourceProvider{
 		logger:          logger,
 		timeout:         timeout,
+		retryConfig:     retryConfig,
 		detectors:       detectors,
 		refreshInterval: 0, // No periodic refresh by default
 	}
@@ -115,9 +119,14 @@ func (p *ResourceProvider) Get(_ context.Context, _ *http.Client) (pcommon.Resou
 }
 
 // Refresh recomputes the resource, replacing any previous result.
-func (p *ResourceProvider) Refresh(ctx context.Context, client *http.Client) error {
-	ctx, cancel := context.WithTimeout(ctx, client.Timeout)
-	defer cancel()
+func (p *ResourceProvider) Refresh(ctx context.Context, _ *http.Client) error {
+	// When retry is enabled and max_elapsed_time is set, bound the retry loop.
+	// The HTTP client's own timeout handles per-request deadlines internally.
+	if p.retryConfig.Enabled && p.retryConfig.MaxElapsedTime > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.retryConfig.MaxElapsedTime)
+		defer cancel()
+	}
 
 	res, schemaURL, err := p.detectResource(ctx)
 	prev := p.detectedResource.Load()
@@ -158,10 +167,23 @@ func (p *ResourceProvider) detectResource(ctx context.Context) (pcommon.Resource
 		resultsChan[i] = ch
 
 		go func(detector Detector, ch chan resourceResult) {
+			if !p.retryConfig.Enabled {
+				// Retry disabled: single attempt only.
+				r, schemaURL, err := detector.Detect(ctx)
+				// Unwrap permanent errors before sending — the retry distinction is irrelevant here.
+				var permErr *backoff.PermanentError
+				if errors.As(err, &permErr) {
+					err = permErr.Err
+				}
+				ch <- resourceResult{resource: r, schemaURL: schemaURL, err: err}
+				return
+			}
+
 			sleep := backoff.ExponentialBackOff{
-				InitialInterval:     1 * time.Second,
-				RandomizationFactor: 1.5,
-				Multiplier:          2,
+				InitialInterval:     p.retryConfig.InitialInterval,
+				RandomizationFactor: p.retryConfig.RandomizationFactor,
+				Multiplier:          p.retryConfig.Multiplier,
+				MaxInterval:         p.retryConfig.MaxInterval,
 			}
 			sleep.Reset()
 
@@ -169,6 +191,14 @@ func (p *ResourceProvider) detectResource(ctx context.Context) (pcommon.Resource
 				r, schemaURL, err := detector.Detect(ctx)
 				if err == nil {
 					ch <- resourceResult{resource: r, schemaURL: schemaURL}
+					return
+				}
+
+				// Permanent error: do not retry (local detectors use this to signal
+				// that retrying is pointless, e.g. missing env var or local file).
+				var permErr *backoff.PermanentError
+				if errors.As(err, &permErr) {
+					ch <- resourceResult{err: permErr.Err}
 					return
 				}
 

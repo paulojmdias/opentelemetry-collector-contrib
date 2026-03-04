@@ -5,6 +5,7 @@ package akamai // import "github.com/open-telemetry/opentelemetry-collector-cont
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	linodemeta "github.com/linode/go-metadata"
@@ -58,11 +59,9 @@ func NewDetector(p processor.Settings, dcfg internal.DetectorConfig) (internal.D
 
 // Detect detects system metadata and returns a resource with the available ones.
 func (d *Detector) Detect(ctx context.Context) (pcommon.Resource, string, error) {
-	// Try to fetch instance metadata; if it fails we're not on Akamai (or metadata unreachable).
 	inst, err := d.client.GetInstance(ctx)
 	if err != nil {
-		d.logger.Debug("Akamai detector: not running on Akamai or metadata unavailable", zap.Error(err))
-		return pcommon.NewResource(), "", nil
+		return pcommon.NewResource(), "", fmt.Errorf("akamai metadata unavailable: %w", err)
 	}
 
 	d.rb.SetCloudAccountID(inst.AccountEUUID)

@@ -5,6 +5,8 @@ package scaleway // import "github.com/open-telemetry/opentelemetry-collector-co
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 
 	instance "github.com/scaleway/scaleway-sdk-go/api/instance/v1"
@@ -50,9 +52,11 @@ func NewDetector(p processor.Settings, dcfg internal.DetectorConfig) (internal.D
 // Detect detects system metadata and returns a resource with the available ones.
 func (d *Detector) Detect(_ context.Context) (pcommon.Resource, string, error) {
 	md, err := d.client.GetMetadata()
-	if err != nil || md == nil {
-		d.logger.Debug("Scaleway detector: not running on Scaleway or metadata unavailable", zap.Error(err))
-		return pcommon.NewResource(), "", nil
+	if err != nil {
+		return pcommon.NewResource(), "", fmt.Errorf("scaleway metadata unavailable: %w", err)
+	}
+	if md == nil {
+		return pcommon.NewResource(), "", errors.New("scaleway metadata unavailable: empty response")
 	}
 
 	d.rb.SetCloudAccountID(md.Organization)

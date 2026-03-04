@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	backoff "github.com/cenkalti/backoff/v5"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/processor"
 
@@ -55,7 +56,8 @@ func (*Detector) Detect(context.Context) (resource pcommon.Resource, schemaURL s
 	err = initializeAttributeMap(res.Attributes(), labels)
 	if err != nil {
 		res.Attributes().Clear()
-		return res, "", err
+		// Malformed env var content is a config mistake — retrying won't help.
+		return res, "", backoff.Permanent(err)
 	}
 
 	return res, "", nil

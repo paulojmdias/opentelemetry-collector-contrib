@@ -35,14 +35,16 @@ func TestDetector_Detect_K8s_Azure(t *testing.T) {
 	}, res.Attributes().AsRaw(), "Resource attrs returned are incorrect")
 }
 
-func TestDetector_Detect_K8s_NonAzure(t *testing.T) {
+func TestDetector_Detect_K8s_MetadataUnavailable(t *testing.T) {
+	// On K8s but Azure metadata unreachable — Detect() must return an error so the retry loop fires.
 	t.Setenv("KUBERNETES_SERVICE_HOST", "localhost")
 	mp := &azure.MockProvider{}
-	mp.On("Metadata").Return(nil, errors.New(""))
+	mp.On("Metadata").Return(nil, errors.New("connection refused"))
 	resourceAttributes := CreateDefaultConfig().ResourceAttributes
 	detector := &Detector{provider: mp, resourceAttributes: resourceAttributes}
 	res, _, err := detector.Detect(t.Context())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "aks metadata unavailable")
 	attrs := res.Attributes()
 	assert.Equal(t, 0, attrs.Len())
 }

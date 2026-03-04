@@ -12,9 +12,11 @@ import (
 	"testing"
 	"time"
 
+	backoff "github.com/cenkalti/backoff/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/processor"
@@ -23,6 +25,15 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-collector-contrib/processor/resourcedetectionprocessor/internal/metadata"
 )
+
+// defaultRetryConfig returns a retry config suitable for tests: fast retries with no elapsed time limit.
+func defaultRetryConfig() configretry.BackOffConfig {
+	cfg := configretry.NewDefaultBackOffConfig()
+	cfg.InitialInterval = 1 * time.Millisecond
+	cfg.MaxInterval = 10 * time.Millisecond
+	cfg.MaxElapsedTime = 0 // no limit; context controls the deadline
+	return cfg
+}
 
 type mockDetector struct {
 	mock.Mock
@@ -91,7 +102,7 @@ func TestDetect(t *testing.T) {
 			}
 
 			f := NewProviderFactory(mockDetectors)
-			p, err := f.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, &mockDetectorConfig{}, mockDetectorTypes...)
+			p, err := f.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, defaultRetryConfig(), &mockDetectorConfig{}, mockDetectorTypes...)
 			require.NoError(t, err)
 
 			// Perform initial detection
@@ -110,7 +121,7 @@ func TestDetect(t *testing.T) {
 func TestDetectResource_InvalidDetectorType(t *testing.T) {
 	mockDetectorKey := DetectorType("mock")
 	p := NewProviderFactory(map[DetectorType]DetectorFactory{})
-	_, err := p.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, &mockDetectorConfig{}, mockDetectorKey)
+	_, err := p.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, defaultRetryConfig(), &mockDetectorConfig{}, mockDetectorKey)
 	require.EqualError(t, err, fmt.Sprintf("invalid detector key: %v", mockDetectorKey))
 }
 
@@ -121,7 +132,7 @@ func TestDetectResource_DetectorFactoryError(t *testing.T) {
 			return nil, errors.New("creation failed")
 		},
 	})
-	_, err := p.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, &mockDetectorConfig{}, mockDetectorKey)
+	_, err := p.CreateResourceProvider(processortest.NewNopSettings(metadata.Type), time.Second, defaultRetryConfig(), &mockDetectorConfig{}, mockDetectorKey)
 	require.EqualError(t, err, fmt.Sprintf("failed creating detector type %q: %v", mockDetectorKey, "creation failed"))
 }
 
@@ -135,7 +146,7 @@ func TestDetectResource_Error_ContextDeadline_WithErrPropagation(t *testing.T) {
 	md2 := &mockDetector{}
 	md2.On("Detect").Return(pcommon.NewResource(), "", errors.New("err2"))
 
-	p := NewResourceProvider(zap.NewNop(), time.Second, md1, md2)
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md1, md2)
 
 	var cancel context.CancelFunc
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
@@ -230,7 +241,7 @@ func TestDetectResource_Parallel(t *testing.T) {
 
 	expectedResourceAttrs := map[string]any{"a": "1", "b": "2", "c": "3"}
 
-	p := NewResourceProvider(zap.NewNop(), time.Second, md1, md2)
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md1, md2)
 
 	// Perform initial detection
 	go func() {
@@ -285,7 +296,7 @@ func TestDetectResource_Reconnect(t *testing.T) {
 
 	expectedResourceAttrs := map[string]any{"a": "1", "b": "2", "c": "3"}
 
-	p := NewResourceProvider(zap.NewNop(), time.Second, md1, md2)
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md1, md2)
 
 	err := p.Refresh(t.Context(), &http.Client{Timeout: 15 * time.Second})
 	assert.NoError(t, err)
@@ -310,7 +321,7 @@ func TestResourceProvider_RefreshInterval(t *testing.T) {
 	md.On("Detect").Return(res1, "", nil).Once()
 	md.On("Detect").Return(res2, "", nil).Once()
 
-	p := NewResourceProvider(zap.NewNop(), 1*time.Second, md)
+	p := NewResourceProvider(zap.NewNop(), 1*time.Second, defaultRetryConfig(), md)
 
 	// Initial detection
 	err := p.Refresh(t.Context(), &http.Client{Timeout: time.Second})
@@ -393,6 +404,145 @@ func TestIsEmptyResource(t *testing.T) {
 	})
 }
 
+// TestRetryDisabled verifies that with retry disabled the detector is called exactly once,
+// even if it returns an error.
+func TestRetryDisabled(t *testing.T) {
+	md := &mockDetector{}
+	md.On("Detect").Return(pcommon.NewResource(), "", errors.New("transient error"))
+
+	retryCfg := configretry.NewDefaultBackOffConfig()
+	retryCfg.Enabled = false
+	p := NewResourceProvider(zap.NewNop(), time.Second, retryCfg, md)
+
+	err := featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), true)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), false)
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	detectErr := p.Refresh(ctx, &http.Client{})
+	require.Error(t, detectErr)
+
+	// Detect must have been called exactly once (no retries).
+	md.AssertNumberOfCalls(t, "Detect", 1)
+}
+
+// TestRetrySucceedsOnSecondAttempt verifies that if a detector fails once then succeeds,
+// the ResourceProvider retries and ultimately returns a successful result.
+func TestRetrySucceedsOnSecondAttempt(t *testing.T) {
+	md := &mockDetector{}
+	res := pcommon.NewResource()
+	require.NoError(t, res.Attributes().FromRaw(map[string]any{"k": "v"}))
+	md.On("Detect").Return(pcommon.NewResource(), "", errors.New("transient")).Once()
+	md.On("Detect").Return(res, "", nil)
+
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	err := p.Refresh(ctx, &http.Client{})
+	require.NoError(t, err)
+
+	got, _, err := p.Get(t.Context(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"k": "v"}, got.Attributes().AsRaw())
+	md.AssertNumberOfCalls(t, "Detect", 2)
+}
+
+// TestPermanentError verifies that a detector returning backoff.Permanent(err) is not retried.
+func TestPermanentError(t *testing.T) {
+	md := &mockDetector{}
+	permErr := backoff.Permanent(errors.New("config is broken"))
+	md.On("Detect").Return(pcommon.NewResource(), "", permErr)
+
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
+
+	err := featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), true)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), false)
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer cancel()
+
+	detectErr := p.Refresh(ctx, &http.Client{})
+	require.Error(t, detectErr)
+	assert.Contains(t, detectErr.Error(), "config is broken")
+
+	// Despite retry being enabled, Detect must be called exactly once
+	// because permanent errors stop the retry loop immediately.
+	md.AssertNumberOfCalls(t, "Detect", 1)
+}
+
+// TestMaxElapsedTime verifies that retry.max_elapsed_time bounds the total retry duration.
+func TestMaxElapsedTime(t *testing.T) {
+	md := &mockDetector{}
+	md.On("Detect").Return(pcommon.NewResource(), "", errors.New("always fails"))
+
+	retryCfg := configretry.NewDefaultBackOffConfig()
+	retryCfg.InitialInterval = 1 * time.Millisecond
+	retryCfg.MaxInterval = 5 * time.Millisecond
+	retryCfg.MaxElapsedTime = 50 * time.Millisecond // stop after 50ms total
+
+	err := featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), true)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = featuregate.GlobalRegistry().Set(metadata.ProcessorResourcedetectionPropagateerrorsFeatureGate.ID(), false)
+	})
+
+	p := NewResourceProvider(zap.NewNop(), time.Second, retryCfg, md)
+
+	start := time.Now()
+	detectErr := p.Refresh(t.Context(), &http.Client{})
+	elapsed := time.Since(start)
+
+	require.Error(t, detectErr)
+	// Should have stopped well within 1 second due to max_elapsed_time=50ms.
+	assert.Less(t, elapsed, 1*time.Second, "retry loop should have stopped after max_elapsed_time")
+	// Should have retried at least once.
+	assert.GreaterOrEqual(t, len(md.Calls), 2, "expected at least 2 Detect calls before giving up")
+}
+
+// TestRefreshKeepsPreviousOnFailure verifies that when a periodic refresh fails after a
+// successful initial detection, the previous resource snapshot is preserved and Refresh
+// returns nil (graceful degradation, not a hard failure).
+func TestRefreshKeepsPreviousOnFailure(t *testing.T) {
+	md := &mockDetector{}
+	res := pcommon.NewResource()
+	require.NoError(t, res.Attributes().FromRaw(map[string]any{"k": "v"}))
+	// First call succeeds.
+	md.On("Detect").Return(res, "", nil).Once()
+	// Subsequent calls always fail.
+	md.On("Detect").Return(pcommon.NewResource(), "", errors.New("network down"))
+
+	p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
+
+	// Initial detection succeeds.
+	err := p.Refresh(t.Context(), &http.Client{})
+	require.NoError(t, err)
+
+	got, _, err := p.Get(t.Context(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"k": "v"}, got.Attributes().AsRaw())
+
+	// Refresh fails — retry loop exhausts quickly via context timeout.
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	err = p.Refresh(ctx, &http.Client{})
+	// Must return nil: the provider gracefully keeps the previous snapshot.
+	require.NoError(t, err)
+
+	// The cached resource must still be the original one.
+	got, _, err = p.Get(t.Context(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"k": "v"}, got.Attributes().AsRaw())
+}
+
 func TestStartStopRefreshing(t *testing.T) {
 	t.Run("with refresh interval", func(t *testing.T) {
 		md := &mockDetector{}
@@ -405,7 +555,7 @@ func TestStartStopRefreshing(t *testing.T) {
 		md.On("Detect").Return(res1, "", nil).Once()
 		md.On("Detect").Return(res2, "", nil)
 
-		p := NewResourceProvider(zap.NewNop(), time.Second, md)
+		p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
 
 		// Initial detection
 		err := p.Refresh(t.Context(), &http.Client{Timeout: time.Second})
@@ -439,7 +589,7 @@ func TestStartStopRefreshing(t *testing.T) {
 		require.NoError(t, res.Attributes().FromRaw(map[string]any{"a": "1"}))
 		md.On("Detect").Return(res, "", nil).Once()
 
-		p := NewResourceProvider(zap.NewNop(), time.Second, md)
+		p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
 
 		// Initial detection
 		err := p.Refresh(t.Context(), &http.Client{Timeout: time.Second})
@@ -464,7 +614,7 @@ func TestStartStopRefreshing(t *testing.T) {
 		require.NoError(t, res.Attributes().FromRaw(map[string]any{"a": "1"}))
 		md.On("Detect").Return(res, "", nil).Once()
 
-		p := NewResourceProvider(zap.NewNop(), time.Second, md)
+		p := NewResourceProvider(zap.NewNop(), time.Second, defaultRetryConfig(), md)
 
 		// Initial detection
 		err := p.Refresh(t.Context(), &http.Client{Timeout: time.Second})

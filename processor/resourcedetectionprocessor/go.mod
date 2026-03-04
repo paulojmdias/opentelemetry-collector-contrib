@@ -32,6 +32,7 @@ require (
 	go.opentelemetry.io/collector/config/confighttp v0.147.0
 	go.opentelemetry.io/collector/config/configopaque v1.53.0
 	go.opentelemetry.io/collector/config/configoptional v1.53.0
+	go.opentelemetry.io/collector/config/configretry v1.53.0
 	go.opentelemetry.io/collector/config/configtls v1.53.0
 	go.opentelemetry.io/collector/confmap v1.53.0
 	go.opentelemetry.io/collector/confmap/xconfmap v0.147.0

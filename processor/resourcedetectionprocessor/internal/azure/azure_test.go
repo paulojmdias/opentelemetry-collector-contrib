@@ -149,6 +149,7 @@ func TestDetectEmptyFieldsOmitted(t *testing.T) {
 }
 
 func TestDetectError(t *testing.T) {
+	// Metadata server unreachable — Detect() must return an error so the retry loop fires.
 	mp := &azure.MockProvider{}
 	mp.On("Metadata").Return(&azure.ComputeMetadata{}, errors.New("mock error"))
 	detector := &Detector{
@@ -157,6 +158,7 @@ func TestDetectError(t *testing.T) {
 		rb:       metadata.NewResourceBuilder(metadata.DefaultResourceAttributesConfig()),
 	}
 	res, _, err := detector.Detect(t.Context())
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "azure metadata unavailable")
 	assert.True(t, internal.IsEmptyResource(res))
 }

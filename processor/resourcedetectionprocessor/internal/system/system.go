@@ -10,6 +10,7 @@ import (
 	"net"
 	"strings"
 
+	backoff "github.com/cenkalti/backoff/v5"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/processor"
@@ -75,24 +76,24 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 
 	osType, err := d.provider.OSType()
 	if err != nil {
-		return pcommon.NewResource(), "", fmt.Errorf("failed getting OS type: %w", err)
+		return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting OS type: %w", err))
 	}
 
 	osVersion, err := d.provider.OSVersion()
 	if err != nil {
-		return pcommon.NewResource(), "", fmt.Errorf("failed getting OS version: %w", err)
+		return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting OS version: %w", err))
 	}
 
 	hostArch, err := d.provider.HostArch()
 	if err != nil {
-		return pcommon.NewResource(), "", fmt.Errorf("failed getting host architecture: %w", err)
+		return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting host architecture: %w", err))
 	}
 
 	var hostIPAttribute []any
 	if d.cfg.ResourceAttributes.HostIP.Enabled {
 		hostIPs, errIPs := d.provider.HostIPs()
 		if errIPs != nil {
-			return pcommon.NewResource(), "", fmt.Errorf("failed getting host IP addresses: %w", errIPs)
+			return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting host IP addresses: %w", errIPs))
 		}
 		for _, ip := range hostIPs {
 			hostIPAttribute = append(hostIPAttribute, ip.String())
@@ -103,7 +104,7 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 	if d.cfg.ResourceAttributes.HostMac.Enabled {
 		hostMACs, errMACs := d.provider.HostMACs()
 		if errMACs != nil {
-			return pcommon.NewResource(), "", fmt.Errorf("failed to get host MAC addresses: %w", errMACs)
+			return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed to get host MAC addresses: %w", errMACs))
 		}
 		for _, mac := range hostMACs {
 			hostMACAttribute = append(hostMACAttribute, toIEEERA(mac))
@@ -114,7 +115,7 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 	if d.cfg.ResourceAttributes.HostInterface.Enabled {
 		interfaces, errInterfaces := d.provider.HostInterfaces()
 		if errInterfaces != nil {
-			return pcommon.NewResource(), "", fmt.Errorf("failed to get host network interfaces: %w", errInterfaces)
+			return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed to get host network interfaces: %w", errInterfaces))
 		}
 		for _, iface := range interfaces {
 			hostInterfaceAttribute = append(hostInterfaceAttribute, iface.Name)
@@ -123,7 +124,7 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 
 	osDescription, err := d.provider.OSDescription(ctx)
 	if err != nil {
-		return pcommon.NewResource(), "", fmt.Errorf("failed getting OS description: %w", err)
+		return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting OS description: %w", err))
 	}
 
 	var cpuInfo []cpu.InfoStat
@@ -132,7 +133,7 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 		d.cfg.ResourceAttributes.HostCPUModelName.Enabled || d.cfg.ResourceAttributes.HostCPUStepping.Enabled {
 		cpuInfo, err = d.provider.CPUInfo(ctx)
 		if err != nil {
-			return pcommon.NewResource(), "", fmt.Errorf("failed getting host cpuinfo: %w", err)
+			return pcommon.NewResource(), "", backoff.Permanent(fmt.Errorf("failed getting host cpuinfo: %w", err))
 		}
 	}
 
@@ -177,7 +178,7 @@ func (d *Detector) Detect(ctx context.Context) (resource pcommon.Resource, schem
 		d.logger.Debug(err.Error())
 	}
 
-	return pcommon.NewResource(), "", errors.New("all hostname sources failed to get hostname")
+	return pcommon.NewResource(), "", backoff.Permanent(errors.New("all hostname sources failed to get hostname"))
 }
 
 // getHostname returns OS hostname

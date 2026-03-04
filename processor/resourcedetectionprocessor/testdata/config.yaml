@@ -19,6 +19,17 @@ resourcedetection/gcp:
   timeout: 2s
   override: false
 
+resourcedetection/gcp-with-retry:
+  detectors: [gcp]
+  timeout: 5s
+  retry:
+    enabled: true
+    initial_interval: 1s
+    max_interval: 30s
+    max_elapsed_time: 5m
+    multiplier: 1.5
+    randomization_factor: 0.5
+
 resourcedetection/ec2:
   detectors: [env, ec2]
   timeout: 2s

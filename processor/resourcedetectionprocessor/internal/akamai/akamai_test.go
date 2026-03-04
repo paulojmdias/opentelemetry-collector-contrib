@@ -102,8 +102,8 @@ func TestAkamaiDetector_Detect_OK(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-func TestAkamaiDetector_NotOnAkamai(t *testing.T) {
-	// Pretend we are not on Akamai / metadata unreachable.
+func TestAkamaiDetector_MetadataUnavailable(t *testing.T) {
+	// Metadata server unreachable — Detect() must return an error so the retry loop fires.
 	withFakeClient(t, &fakeAkamaiClient{
 		err: errors.New("no metadata here"),
 	})
@@ -112,7 +112,8 @@ func TestAkamaiDetector_NotOnAkamai(t *testing.T) {
 	require.NoError(t, err)
 
 	res, schemaURL, err := det.Detect(t.Context())
-	require.NoError(t, err)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "akamai metadata unavailable")
 	assert.True(t, internal.IsEmptyResource(res))
 	assert.Empty(t, schemaURL)
 }

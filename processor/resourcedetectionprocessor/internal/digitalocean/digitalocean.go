@@ -5,6 +5,7 @@ package digitalocean // import "github.com/open-telemetry/opentelemetry-collecto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	do "github.com/digitalocean/go-metadata"
@@ -50,9 +51,11 @@ func NewDetector(p processor.Settings, dcfg internal.DetectorConfig) (internal.D
 // Detect detects system metadata and returns a resource with the available ones.
 func (d *Detector) Detect(_ context.Context) (pcommon.Resource, string, error) {
 	md, err := d.client.Metadata()
-	if err != nil || md == nil {
-		d.logger.Debug("DigitalOcean detector: not running on DigitalOcean or metadata unavailable", zap.Error(err))
-		return pcommon.NewResource(), "", nil
+	if err != nil {
+		return pcommon.NewResource(), "", fmt.Errorf("digitalocean metadata unavailable: %w", err)
+	}
+	if md == nil {
+		return pcommon.NewResource(), "", errors.New("digitalocean metadata unavailable: empty response")
 	}
 
 	d.rb.SetCloudProvider(TypeStr)

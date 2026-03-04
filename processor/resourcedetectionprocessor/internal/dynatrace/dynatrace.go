@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 
+	backoff "github.com/cenkalti/backoff/v5"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/processor"
 	"go.uber.org/zap"
@@ -58,7 +59,8 @@ func (d Detector) Detect(_ context.Context) (pcommon.Resource, string, error) {
 	res := pcommon.NewResource()
 
 	if err := d.readPropertiesFile(res.Attributes()); err != nil {
-		return res, "", err
+		// Local file errors (permission denied, etc.) are deterministic — retrying won't help.
+		return res, "", backoff.Permanent(err)
 	}
 	return res, "", nil
 }
