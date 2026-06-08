@@ -102,8 +102,7 @@ func (e *traceExporterImp) Shutdown(ctx context.Context) error {
 func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
 	batches := batchpersignal.SplitTraces(td)
 
-	exporterSegregatedTraces := make(exporterTraces)
-	endpoints := make(map[*wrappedExporter]string)
+	exporterSegregatedTraces := make(exporterTraces, e.loadBalancer.NumBackends())
 	for _, batch := range batches {
 		routingID, err := routingIdentifiersFromTraces(batch, e.routingKey, e.routingAttrs)
 		if err != nil {
@@ -111,7 +110,7 @@ func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) 
 		}
 
 		for rid := range routingID {
-			exp, endpoint, err := e.loadBalancer.exporterAndEndpoint([]byte(rid))
+			exp, _, err := e.loadBalancer.exporterAndEndpoint([]byte(rid))
 			if err != nil {
 				return err
 			}
@@ -122,8 +121,6 @@ func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) 
 				exporterSegregatedTraces[exp] = ptrace.NewTraces()
 			}
 			exporterSegregatedTraces[exp] = mergeTraces(exporterSegregatedTraces[exp], batch)
-
-			endpoints[exp] = endpoint
 		}
 	}
 

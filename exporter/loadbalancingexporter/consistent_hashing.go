@@ -45,9 +45,7 @@ func (h *hashRing) endpointFor(identifier []byte) string {
 		// perhaps the ring itself couldn't get initialized yet?
 		return ""
 	}
-	hasher := crc32.NewIEEE()
-	hasher.Write(identifier)
-	hash := hasher.Sum32()
+	hash := crc32.ChecksumIEEE(identifier)
 	pos := hash % maxPositions
 
 	return h.findEndpoint(position(pos))
@@ -106,12 +104,14 @@ func bsearch(pos position, left, right []ringItem) ringItem {
 func positionsFor(endpoint string, numPoints int) []position {
 	res := make([]position, 0, numPoints)
 	buf := make([]byte, 4)
+	// The hash of the endpoint is the same for every point, so compute it once and
+	// extend it with the point index. This matches writing endpoint then buf to a
+	// crc32.NewIEEE() hasher, but avoids allocating a hasher (and the []byte(endpoint)
+	// conversion) on every iteration.
+	endpointHash := crc32.ChecksumIEEE([]byte(endpoint))
 	for i := range numPoints {
-		h := crc32.NewIEEE()
 		binary.LittleEndian.PutUint32(buf, uint32(i))
-		h.Write([]byte(endpoint))
-		h.Write(buf)
-		hash := h.Sum32()
+		hash := crc32.Update(endpointHash, crc32.IEEETable, buf)
 		pos := hash % maxPositions
 		res = append(res, position(pos))
 	}

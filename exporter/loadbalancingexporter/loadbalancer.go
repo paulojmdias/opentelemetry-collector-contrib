@@ -241,3 +241,11 @@ func (lb *loadBalancer) exporterAndEndpoint(identifier []byte) (*wrappedExporter
 
 	return exp, endpoint, nil
 }
+
+// NumBackends returns the current number of resolved backend exporters. It is used to
+// presize the per-batch routing maps on the hot path.
+func (lb *loadBalancer) NumBackends() int {
+	lb.updateLock.RLock()
+	defer lb.updateLock.RUnlock()
+	return len(lb.exporters)
+}

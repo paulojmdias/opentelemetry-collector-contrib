@@ -121,10 +121,9 @@ func (e *logExporterImp) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 	}
 
 	logsByExporter := make(map[*wrappedExporter]plog.Logs, len(batches))
-	exporterEndpoints := make(map[*wrappedExporter]string, len(batches))
 
 	for routingID, lds := range batches {
-		exp, endpoint, err := e.loadBalancer.exporterAndEndpoint([]byte(routingID))
+		exp, _, err := e.loadBalancer.exporterAndEndpoint([]byte(routingID))
 		if err != nil {
 			return err
 		}
@@ -133,7 +132,6 @@ func (e *logExporterImp) ConsumeLogs(ctx context.Context, ld plog.Logs) error {
 		if !ok {
 			exp.consumeWG.Add(1)
 			logsByExporter[exp] = lds
-			exporterEndpoints[exp] = endpoint
 		} else {
 			mergeLogs(logsByExporter[exp], lds)
 		}
