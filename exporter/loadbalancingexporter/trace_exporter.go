@@ -100,10 +100,17 @@ func (e *traceExporterImp) Shutdown(ctx context.Context) error {
 }
 
 func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) error {
+	// traceID routing is the default and most common case. For it we can route spans
+	// directly into per-backend ptrace.Traces in a single pass, avoiding the
+	// batchpersignal.SplitTraces + mergeTraces round-trip that deep-copies every span
+	// into a per-trace ptrace.Traces and then moves it again.
+	if e.routingKey == traceIDRouting {
+		return e.consumeTracesByID(ctx, td)
+	}
+
 	batches := batchpersignal.SplitTraces(td)
 
 	exporterSegregatedTraces := make(exporterTraces)
-	endpoints := make(map[*wrappedExporter]string)
 	for _, batch := range batches {
 		routingID, err := routingIdentifiersFromTraces(batch, e.routingKey, e.routingAttrs)
 		if err != nil {
@@ -111,7 +118,7 @@ func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) 
 		}
 
 		for rid := range routingID {
-			exp, endpoint, err := e.loadBalancer.exporterAndEndpoint([]byte(rid))
+			exp, _, err := e.loadBalancer.exporterAndEndpoint([]byte(rid))
 			if err != nil {
 				return err
 			}
@@ -122,29 +129,98 @@ func (e *traceExporterImp) ConsumeTraces(ctx context.Context, td ptrace.Traces) 
 				exporterSegregatedTraces[exp] = ptrace.NewTraces()
 			}
 			exporterSegregatedTraces[exp] = mergeTraces(exporterSegregatedTraces[exp], batch)
-
-			endpoints[exp] = endpoint
 		}
 	}
 
 	var errs error
-
 	for exp, td := range exporterSegregatedTraces {
-		start := time.Now()
-		err := exp.ConsumeTraces(ctx, td)
-		exp.consumeWG.Done()
-		errs = multierr.Append(errs, err)
-		duration := time.Since(start)
-		e.telemetry.LoadbalancerBackendLatency.Record(ctx, duration.Milliseconds(), metric.WithAttributeSet(exp.endpointAttr))
-		if err == nil {
-			e.telemetry.LoadbalancerBackendOutcome.Add(ctx, 1, metric.WithAttributeSet(exp.successAttr))
-		} else {
-			e.telemetry.LoadbalancerBackendOutcome.Add(ctx, 1, metric.WithAttributeSet(exp.failureAttr))
-			e.logger.Debug("failed to export traces", zap.Error(err))
+		errs = multierr.Append(errs, e.exportToBackend(ctx, exp, td))
+	}
+	return errs
+}
+
+// consumeTracesByID routes the spans in td to the backends responsible for each span's
+// trace ID, accumulating them directly into one ptrace.Traces per backend. Spans from the
+// same source resource/scope that land on the same backend are grouped under a single
+// ResourceSpans/ScopeSpans, copying the resource and scope only when a new source
+// resource/scope is encountered for that backend. This produces the same routing decisions
+// and the same per-backend span sets as the SplitTraces path, but copies each span exactly
+// once and allocates a single ptrace.Traces per backend instead of one per trace.
+func (e *traceExporterImp) consumeTracesByID(ctx context.Context, td ptrace.Traces) error {
+	// dest tracks the in-progress ptrace.Traces for a backend along with the source
+	// resource/scope indices of the ScopeSpans we are currently appending to, so spans
+	// from a contiguous run of the same source scope reuse it.
+	type dest struct {
+		traces ptrace.Traces
+		curSS  ptrace.ScopeSpans
+		rsIdx  int
+		ssIdx  int
+		active bool
+	}
+	dests := make(map[*wrappedExporter]*dest, e.loadBalancer.NumBackends())
+
+	rss := td.ResourceSpans()
+	for i := 0; i < rss.Len(); i++ {
+		rs := rss.At(i)
+		sss := rs.ScopeSpans()
+		for j := 0; j < sss.Len(); j++ {
+			ss := sss.At(j)
+			spans := ss.Spans()
+			for k := 0; k < spans.Len(); k++ {
+				span := spans.At(k)
+				tid := span.TraceID()
+
+				exp, _, err := e.loadBalancer.exporterAndEndpoint(tid[:])
+				if err != nil {
+					return err
+				}
+
+				d, ok := dests[exp]
+				if !ok {
+					exp.consumeWG.Add(1)
+					d = &dest{traces: ptrace.NewTraces()}
+					dests[exp] = d
+				}
+
+				// Start a new ResourceSpans/ScopeSpans for this backend whenever the
+				// source resource/scope changes (spans within a scope are contiguous).
+				if !d.active || d.rsIdx != i || d.ssIdx != j {
+					destRS := d.traces.ResourceSpans().AppendEmpty()
+					rs.Resource().CopyTo(destRS.Resource())
+					destRS.SetSchemaUrl(rs.SchemaUrl())
+					d.curSS = destRS.ScopeSpans().AppendEmpty()
+					ss.Scope().CopyTo(d.curSS.Scope())
+					d.curSS.SetSchemaUrl(ss.SchemaUrl())
+					d.rsIdx, d.ssIdx, d.active = i, j, true
+				}
+
+				span.CopyTo(d.curSS.Spans().AppendEmpty())
+			}
 		}
 	}
 
+	var errs error
+	for exp, d := range dests {
+		errs = multierr.Append(errs, e.exportToBackend(ctx, exp, d.traces))
+	}
 	return errs
+}
+
+// exportToBackend sends td to a single backend exporter, records the per-backend telemetry,
+// and signals completion on the exporter's consume wait group.
+func (e *traceExporterImp) exportToBackend(ctx context.Context, exp *wrappedExporter, td ptrace.Traces) error {
+	start := time.Now()
+	err := exp.ConsumeTraces(ctx, td)
+	exp.consumeWG.Done()
+	duration := time.Since(start)
+	e.telemetry.LoadbalancerBackendLatency.Record(ctx, duration.Milliseconds(), metric.WithAttributeSet(exp.endpointAttr))
+	if err == nil {
+		e.telemetry.LoadbalancerBackendOutcome.Add(ctx, 1, metric.WithAttributeSet(exp.successAttr))
+	} else {
+		e.telemetry.LoadbalancerBackendOutcome.Add(ctx, 1, metric.WithAttributeSet(exp.failureAttr))
+		e.logger.Debug("failed to export traces", zap.Error(err))
+	}
+	return err
 }
 
 // routingIdentifiersFromTraces reads the traces and determines an identifier that can be used to define a position on the
